@@ -1,0 +1,512 @@
+package com.sd.lib.compose.player
+
+import android.annotation.SuppressLint
+import android.content.Context
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import androidx.annotation.CallSuper
+import androidx.annotation.OptIn
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.rtsp.RtspMediaSource
+import androidx.media3.exoplayer.video.VideoRendererEventListener
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+interface ComposePlayer {
+  val playerStateFlow: StateFlow<ComposePlayerState>
+
+  val bufferStateFlow: StateFlow<ComposePlayerBufferState>
+
+  /** 回调对象 */
+  fun setCallback(callback: Callback)
+
+  /** 设置数据源 */
+  fun setDataSource(uri: String)
+
+  /** 开始播放 */
+  fun play()
+
+  /** 暂停播放 */
+  fun pause()
+
+  /** 停止播放 */
+  fun stop()
+
+  /** 移动进度到指定时间点 */
+  fun seekTo(positionMs: Long)
+
+  /** 当前播放进度时间点 */
+  fun getCurrentPosition(): Long
+
+  /** 释放 */
+  fun release()
+
+  abstract class Callback {
+    /** 播放器状态变化 */
+    open fun onPlayerStateChanged(state: ComposePlayerState) = Unit
+
+    /** 缓冲状态变化 */
+    open fun onPlayerBufferStateChanged(state: ComposePlayerBufferState) = Unit
+
+    /** 播放器错误 */
+    open fun onPlayerError(error: PlaybackException) = Unit
+  }
+
+  companion object {
+    fun create(
+      context: Context,
+      retryOnErrorInterval: Long = 0,
+    ): ComposePlayer {
+      return PlayerImpl(
+        context = context.applicationContext,
+        playerProvider = { ctx -> ExoPlayer.Builder(ctx).build() },
+        setMedia = { uri -> setMediaItem(MediaItem.fromUri(encodeUriIfNeed(uri))) },
+        retryOnErrorInterval = retryOnErrorInterval,
+      )
+    }
+
+    @SuppressLint("UnsafeOptInUsageError")
+    fun createRtsp(
+      context: Context,
+      forceUseRtpTcp: Boolean = true,
+      disableAudio: Boolean = true,
+      retryOnErrorInterval: Long = 5000,
+    ): ComposePlayer {
+      val rtspSourceFactory = RtspMediaSource.Factory()
+        .setForceUseRtpTcp(forceUseRtpTcp)
+        .setTimeoutMs(Long.MAX_VALUE)
+      return RtspPlayerImpl(
+        context = context.applicationContext,
+        playerProvider = { ctx -> newLivePlayer(ctx, disableAudio = disableAudio) },
+        setMedia = { uri ->
+          val mediaItem = MediaItem.fromUri(encodeUriIfNeed(uri))
+          val mediaSource = rtspSourceFactory.createMediaSource(mediaItem)
+          setMediaSource(mediaSource)
+        },
+        retryOnErrorInterval = retryOnErrorInterval,
+      )
+    }
+  }
+}
+
+enum class ComposePlayerState {
+  /** 空闲 */
+  Idle,
+
+  /** 播放中 */
+  Playing,
+
+  /** 暂停 */
+  Paused,
+
+  /** 播放结束 */
+  Ended,
+}
+
+enum class ComposePlayerBufferState {
+  None,
+  Buffering,
+  Ready,
+}
+
+@OptIn(UnstableApi::class)
+open class PlayerImpl(
+  private val context: Context,
+  private val playerProvider: (Context) -> ExoPlayer,
+  private val setMedia: ExoPlayer.(String) -> Unit,
+  private val retryOnErrorInterval: Long,
+) : ComposePlayer, Player.Listener {
+  private var _exoPlayer by mutableStateOf<ExoPlayer?>(null)
+
+  private val _playerStateFlow: MutableStateFlow<ComposePlayerState> = MutableStateFlow(ComposePlayerState.Idle)
+  private val _bufferStateFlow: MutableStateFlow<ComposePlayerBufferState> = MutableStateFlow(ComposePlayerBufferState.None)
+
+  private var _requireState: ComposePlayerState? = null
+  private var _dataSource = ""
+  private var _seekToPositionMs: Long? = null
+  private var _callback: ComposePlayer.Callback? = null
+
+  protected val handler = Handler(Looper.getMainLooper())
+
+  val media3Player: Player?
+    get() = _exoPlayer
+
+  override val playerStateFlow: StateFlow<ComposePlayerState> = _playerStateFlow.asStateFlow()
+  override val bufferStateFlow: StateFlow<ComposePlayerBufferState> = _bufferStateFlow.asStateFlow()
+
+  override fun setCallback(callback: ComposePlayer.Callback) {
+    _callback = callback
+  }
+
+  override fun setDataSource(uri: String) {
+    if (_dataSource != uri) {
+      _dataSource = uri
+      stopPlayer()
+      updatePlayer()
+    }
+  }
+
+  override fun play() {
+    _requireState = ComposePlayerState.Playing
+    stopRetry()
+    updatePlayer()
+  }
+
+  override fun pause() {
+    _requireState = ComposePlayerState.Paused
+    stopRetry()
+    updatePlayer()
+  }
+
+  override fun stop() {
+    _requireState = ComposePlayerState.Idle
+    stopRetry()
+    updatePlayer()
+  }
+
+  override fun seekTo(positionMs: Long) {
+    _exoPlayer?.seekTo(positionMs)
+    _seekToPositionMs = if (_exoPlayer?.currentPosition == positionMs) null else positionMs
+  }
+
+  override fun getCurrentPosition(): Long {
+    return _exoPlayer?.currentPosition ?: -1
+  }
+
+  @CallSuper
+  override fun release() {
+    _requireState = null
+    _exoPlayer?.also {
+      _exoPlayer = null
+      it.removeListener(this@PlayerImpl)
+      it.release()
+    }
+    stopRetry()
+    _dataSource = ""
+    _callback = null
+    setBufferState(ComposePlayerBufferState.None)
+    setPlayerState(ComposePlayerState.Idle)
+  }
+
+  private fun updatePlayer() {
+    when (_requireState) {
+      ComposePlayerState.Idle -> stopPlayer()
+      ComposePlayerState.Playing -> startPlayer()
+      ComposePlayerState.Paused -> pausePlayer()
+      ComposePlayerState.Ended -> {}
+      null -> {}
+    }
+  }
+
+  private fun prepare() {
+    val dataSource = _dataSource
+    if (dataSource.isEmpty()) return
+
+    val player = _exoPlayer ?: playerProvider(context).also { player ->
+      _exoPlayer = player
+      player.playWhenReady = false
+      player.addListener(this@PlayerImpl)
+    }
+
+    if (player.playbackState == Player.STATE_IDLE) {
+      setMedia(player, dataSource)
+      player.prepare()
+    }
+  }
+
+  /** 开始播放 */
+  protected fun startPlayer() {
+    prepare()
+    _exoPlayer?.also { player ->
+      if (player.playbackState == Player.STATE_ENDED) {
+        player.seekTo(0)
+      }
+      player.play()
+    }
+  }
+
+  /** 停止播放 */
+  protected fun stopPlayer() {
+    _exoPlayer?.also { player ->
+      if (player.playbackState != Player.STATE_IDLE) {
+        player.stop()
+      }
+    }
+  }
+
+  /** 暂停播放 */
+  private fun pausePlayer() {
+    prepare()
+    _exoPlayer?.also { player ->
+      player.pause()
+    }
+  }
+
+  @CallSuper
+  override fun onIsPlayingChanged(isPlaying: Boolean) {
+    if (isPlaying) {
+      setPlayerState(ComposePlayerState.Playing)
+    } else {
+      if (_requireState == ComposePlayerState.Paused
+        || (_exoPlayer?.playbackState ?: Player.STATE_IDLE) == Player.STATE_READY
+      ) {
+        setPlayerState(ComposePlayerState.Paused)
+      }
+    }
+  }
+
+  @CallSuper
+  override fun onPlaybackStateChanged(playbackState: Int) {
+    when (playbackState) {
+      Player.STATE_BUFFERING -> {
+        setBufferState(ComposePlayerBufferState.Buffering)
+      }
+      Player.STATE_READY -> {
+        setBufferState(ComposePlayerBufferState.Ready)
+      }
+      else -> {
+        setBufferState(ComposePlayerBufferState.None)
+      }
+    }
+
+    when (playbackState) {
+      Player.STATE_IDLE -> {
+        setPlayerState(ComposePlayerState.Idle)
+      }
+      Player.STATE_READY -> {
+        stopRetry()
+        _seekToPositionMs?.also { seekTo(it) }
+        updatePlayer()
+      }
+      Player.STATE_ENDED -> {
+        _requireState = ComposePlayerState.Ended
+        setPlayerState(ComposePlayerState.Ended)
+      }
+      else -> {}
+    }
+  }
+
+  override fun onPlayerError(error: PlaybackException) {
+    if (startRetry()) {
+      // 已经发起重试
+    } else {
+      _requireState = ComposePlayerState.Idle
+    }
+    _callback?.onPlayerError(error)
+  }
+
+  private fun setPlayerState(state: ComposePlayerState) {
+    if (_playerStateFlow.value == state) return
+    _playerStateFlow.value = state
+    _callback?.onPlayerStateChanged(state)
+  }
+
+  private fun setBufferState(state: ComposePlayerBufferState) {
+    if (_bufferStateFlow.value == state) return
+    _bufferStateFlow.value = state
+    _callback?.onPlayerBufferStateChanged(state)
+  }
+
+  private var _retryJob: Runnable? = null
+
+  private fun startRetry(): Boolean {
+    if (retryOnErrorInterval <= 0) return false
+    return when (val requireState = _requireState) {
+      ComposePlayerState.Playing,
+      ComposePlayerState.Paused,
+        -> {
+        Runnable {
+          when (requireState) {
+            ComposePlayerState.Playing -> startPlayer()
+            ComposePlayerState.Paused -> pausePlayer()
+            else -> error("This should not happen")
+          }
+        }.also { job ->
+          stopRetry()
+          _retryJob = job
+          handler.postDelayed(job, retryOnErrorInterval)
+        }
+        true
+      }
+      else -> false
+    }
+  }
+
+  private fun stopRetry() {
+    _retryJob?.also {
+      _retryJob = null
+      handler.removeCallbacks(it)
+    }
+  }
+}
+
+private class RtspPlayerImpl(
+  context: Context,
+  playerProvider: (Context) -> ExoPlayer,
+  setMedia: ExoPlayer.(String) -> Unit,
+  retryOnErrorInterval: Long,
+  private val chaseLatency: Long = 200,
+) : PlayerImpl(
+  context = context,
+  playerProvider = playerProvider,
+  setMedia = setMedia,
+  retryOnErrorInterval = retryOnErrorInterval,
+) {
+  override fun pause() {
+    super.stop()
+  }
+
+  override fun seekTo(positionMs: Long) = Unit
+
+  override fun release() {
+    stopChaseLatencyJob()
+    stopBufferingTimeoutJob()
+    super.release()
+  }
+
+  override fun onIsPlayingChanged(isPlaying: Boolean) {
+    super.onIsPlayingChanged(isPlaying)
+    if (isPlaying) {
+      startChaseLatencyJob()
+    } else {
+      stopChaseLatencyJob()
+    }
+  }
+
+  override fun onPlaybackStateChanged(playbackState: Int) {
+    super.onPlaybackStateChanged(playbackState)
+    if (playbackState == Player.STATE_BUFFERING) {
+      startBufferingTimeoutJob()
+    } else {
+      stopBufferingTimeoutJob()
+    }
+  }
+
+  private fun startBufferingTimeoutJob() {
+    handler.removeCallbacks(_bufferingTimeoutJob)
+    handler.postDelayed(_bufferingTimeoutJob, 5000)
+  }
+
+  private fun stopBufferingTimeoutJob() {
+    handler.removeCallbacks(_bufferingTimeoutJob)
+  }
+
+  /** 缓冲超时任务 */
+  private val _bufferingTimeoutJob = Runnable {
+    if (media3Player?.playbackState == Player.STATE_BUFFERING) {
+      stopPlayer()
+      startPlayer()
+    }
+  }
+
+  private fun startChaseLatencyJob() {
+    if (chaseLatency > 0) {
+      handler.removeCallbacks(_chaseLatencyJob)
+      handler.post(_chaseLatencyJob)
+    }
+  }
+
+  private fun stopChaseLatencyJob() {
+    if (chaseLatency > 0) {
+      handler.removeCallbacks(_chaseLatencyJob)
+    }
+  }
+
+  /** 追帧任务 */
+  private val _chaseLatencyJob = object : Runnable {
+    override fun run() {
+      if (chaseLatency > 0) {
+        val player = media3Player
+        if (player != null && player.isPlaying) {
+          val bufferedPosition = player.bufferedPosition
+          val currentPosition = player.currentPosition
+          if (bufferedPosition != C.TIME_UNSET && currentPosition != C.TIME_UNSET) {
+            val drift = bufferedPosition - currentPosition
+            if (drift > chaseLatency) {
+              if (player.playbackParameters.speed != 1.2f) {
+                player.playbackParameters = PlaybackParameters(1.2f)
+              }
+            } else if (drift < (chaseLatency / 2)) {
+              if (player.playbackParameters.speed != 1.0f) {
+                player.playbackParameters = PlaybackParameters(1.0f)
+              }
+            }
+          }
+          handler.postDelayed(this, 100)
+        }
+      }
+    }
+  }
+}
+
+@SuppressLint("UnsafeOptInUsageError")
+private fun newLivePlayer(
+  context: Context,
+  disableAudio: Boolean,
+): ExoPlayer {
+  val loadController = DefaultLoadControl.Builder()
+    .setBufferDurationsMs(32, 30000, 0, 0)
+    .setPrioritizeTimeOverSizeThresholds(true)
+    .setBackBuffer(0, false)
+    .build()
+
+  val renderersFactory = object : DefaultRenderersFactory(context) {
+    override fun buildVideoRenderers(
+      context: Context,
+      extensionRendererMode: Int,
+      mediaCodecSelector: MediaCodecSelector,
+      enableDecoderFallback: Boolean,
+      eventHandler: Handler,
+      eventListener: VideoRendererEventListener,
+      allowedVideoJoiningTimeMs: Long,
+      out: ArrayList<Renderer>,
+    ) {
+      super.buildVideoRenderers(
+        context, extensionRendererMode, mediaCodecSelector, enableDecoderFallback,
+        eventHandler, eventListener, 0L, out
+      )
+    }
+  }
+
+  return ExoPlayer.Builder(context, renderersFactory)
+    .setLoadControl(loadController)
+    .build()
+    .also { player ->
+      if (disableAudio) {
+        player.trackSelectionParameters = player.trackSelectionParameters
+          .buildUpon()
+          .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
+          .build()
+      }
+    }
+}
+
+private fun encodeUriIfNeed(uri: String): String {
+  if (uri.isEmpty()) return uri
+  val androidUri = Uri.parse(uri)
+  val userInfo = androidUri.userInfo ?: return uri
+  if (userInfo.isEmpty()) return uri
+
+  val parts = userInfo.split(":", limit = 2)
+  val username = parts[0]
+  val password = if (parts.size > 1) parts[1] else ""
+
+  val encodedUsername = Uri.encode(username)
+  val encodedPassword = Uri.encode(password)
+  return uri.replaceFirst(userInfo, "$encodedUsername:$encodedPassword")
+}
