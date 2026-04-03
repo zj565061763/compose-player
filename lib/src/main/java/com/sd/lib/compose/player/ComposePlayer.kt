@@ -441,25 +441,24 @@ private class RtspPlayerImpl(
   /** 追帧任务 */
   private val _chaseLatencyJob = object : Runnable {
     override fun run() {
-      if (chaseLatency > 0) {
-        val player = media3Player
-        if (player != null && player.isPlaying) {
-          val bufferedPosition = player.bufferedPosition
-          val currentPosition = player.currentPosition
-          if (bufferedPosition != C.TIME_UNSET && currentPosition != C.TIME_UNSET) {
-            val drift = bufferedPosition - currentPosition
-            if (drift > chaseLatency) {
-              if (player.playbackParameters.speed != 1.2f) {
-                player.playbackParameters = PlaybackParameters(1.2f)
-              }
-            } else if (drift < (chaseLatency / 2)) {
-              if (player.playbackParameters.speed != 1.0f) {
-                player.playbackParameters = PlaybackParameters(1.0f)
-              }
+      if (chaseLatency <= 0) return
+      val player = media3Player ?: return
+      if (player.isPlaying) {
+        val bufferedPosition = player.bufferedPosition
+        val currentPosition = player.currentPosition
+        if (bufferedPosition != C.TIME_UNSET && currentPosition != C.TIME_UNSET) {
+          val drift = bufferedPosition - currentPosition
+          if (drift > chaseLatency) {
+            if (player.playbackParameters.speed != 1.2f) {
+              player.playbackParameters = PlaybackParameters(1.2f)
+            }
+          } else if (drift < (chaseLatency / 2)) {
+            if (player.playbackParameters.speed != 1.0f) {
+              player.playbackParameters = PlaybackParameters(1.0f)
             }
           }
-          handler.postDelayed(this, chaseLatency / 2)
         }
+        handler.postDelayed(this, chaseLatency / 2)
       }
     }
   }
