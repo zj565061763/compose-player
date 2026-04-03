@@ -26,7 +26,6 @@ import com.sd.lib.compose.player.ComposePlayerBufferState
 import com.sd.lib.compose.player.ComposePlayerException
 import com.sd.lib.compose.player.ComposePlayerState
 import com.sd.lib.compose.player.ComposePlayerView
-import com.sd.lib.compose.player.ComposePlayerViewSurfaceType
 import com.sd.lib.compose.player.rememberComposePlayer
 
 class SamplePlayer : ComponentActivity() {
@@ -84,7 +83,6 @@ private fun Content(
       ComposePlayerView(
         modifier = Modifier.fillMaxSize(),
         player = player,
-        surfaceType = ComposePlayerViewSurfaceType.TextureView,
       )
     }
 

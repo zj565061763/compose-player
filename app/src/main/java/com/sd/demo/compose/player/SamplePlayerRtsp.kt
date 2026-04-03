@@ -27,7 +27,6 @@ import com.sd.lib.compose.player.ComposePlayerBufferState
 import com.sd.lib.compose.player.ComposePlayerException
 import com.sd.lib.compose.player.ComposePlayerState
 import com.sd.lib.compose.player.ComposePlayerView
-import com.sd.lib.compose.player.ComposePlayerViewSurfaceType
 import com.sd.lib.compose.player.rememberComposePlayerRtsp
 
 class SamplePlayerRtsp : ComponentActivity() {
@@ -89,7 +88,6 @@ private fun Content(
           .fillMaxSize()
           .graphicsLayer { scaleX = -1f },
         player = player,
-        surfaceType = ComposePlayerViewSurfaceType.TextureView,
       )
     }
 

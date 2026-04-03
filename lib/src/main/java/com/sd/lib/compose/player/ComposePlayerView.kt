@@ -17,7 +17,7 @@ fun ComposePlayerView(
   modifier: Modifier = Modifier,
   player: ComposePlayer,
   contentScale: ContentScale = ContentScale.Fit,
-  surfaceType: ComposePlayerViewSurfaceType = ComposePlayerViewSurfaceType.SurfaceView,
+  surfaceType: ComposePlayerViewSurfaceType = ComposePlayerViewSurfaceType.TextureView,
 ) {
   require(player is PlayerImpl)
 
