@@ -458,7 +458,7 @@ private class RtspPlayerImpl(
               }
             }
           }
-          handler.postDelayed(this, 100)
+          handler.postDelayed(this, chaseLatency / 2)
         }
       }
     }
