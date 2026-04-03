@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,10 +44,14 @@ class SamplePlayer : ComponentActivity() {
 private fun Content(
   modifier: Modifier = Modifier,
 ) {
+  val player = rememberComposePlayer()
+
+  val playerState by player.playerStateFlow.collectAsStateWithLifecycle()
+  val bufferState by player.bufferStateFlow.collectAsStateWithLifecycle()
   var errorTips by remember { mutableStateOf("") }
 
-  val player = rememberComposePlayer() {
-    setCallback(object : ComposePlayer.Callback() {
+  LaunchedEffect(player) {
+    player.setCallback(object : ComposePlayer.Callback() {
       override fun onPlayerStateChanged(state: ComposePlayerState) {
         logMsg { "onPlayerStateChanged:$state" }
       }
@@ -64,9 +69,6 @@ private fun Content(
       }
     })
   }
-
-  val playerState by player.playerStateFlow.collectAsStateWithLifecycle()
-  val bufferState by player.bufferStateFlow.collectAsStateWithLifecycle()
 
   Column(
     modifier = modifier.fillMaxSize(),

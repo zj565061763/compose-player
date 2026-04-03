@@ -79,14 +79,18 @@ interface ComposePlayer {
         retryOnErrorInterval = retryOnErrorInterval,
       )
     }
+  }
+}
 
+interface ComposePlayerRtsp : ComposePlayer {
+  companion object {
     @SuppressLint("UnsafeOptInUsageError")
-    fun createRtsp(
+    fun create(
       context: Context,
       forceUseRtpTcp: Boolean = true,
       disableAudio: Boolean = true,
       retryOnErrorInterval: Long = 5000,
-    ): ComposePlayer {
+    ): ComposePlayerRtsp {
       val rtspSourceFactory = RtspMediaSource.Factory()
         .setForceUseRtpTcp(forceUseRtpTcp)
         .setTimeoutMs(Long.MAX_VALUE)
@@ -366,7 +370,7 @@ private class RtspPlayerImpl(
   playerProvider = playerProvider,
   setMedia = setMedia,
   retryOnErrorInterval = retryOnErrorInterval,
-) {
+), ComposePlayerRtsp {
   override fun pause() {
     super.stop()
   }

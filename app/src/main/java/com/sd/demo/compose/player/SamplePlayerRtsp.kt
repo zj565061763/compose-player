@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,10 +47,14 @@ private const val DATA_SOURCE = "rtsp://admin:camera@192.168.100.110:554/Streami
 private fun Content(
   modifier: Modifier = Modifier,
 ) {
-  var errorTips by remember { mutableStateOf("") }
+  val player = rememberComposePlayerRtsp()
 
-  val player = rememberComposePlayerRtsp {
-    setCallback(object : ComposePlayer.Callback() {
+  var errorTips by remember { mutableStateOf("") }
+  val playerState by player.playerStateFlow.collectAsStateWithLifecycle()
+  val bufferState by player.bufferStateFlow.collectAsStateWithLifecycle()
+
+  LaunchedEffect(player) {
+    player.setCallback(object : ComposePlayer.Callback() {
       override fun onPlayerStateChanged(state: ComposePlayerState) {
         logMsg { "onPlayerStateChanged:$state" }
       }
@@ -67,9 +72,6 @@ private fun Content(
       }
     })
   }
-
-  val playerState by player.playerStateFlow.collectAsStateWithLifecycle()
-  val bufferState by player.bufferStateFlow.collectAsStateWithLifecycle()
 
   Column(
     modifier = modifier.fillMaxSize(),
