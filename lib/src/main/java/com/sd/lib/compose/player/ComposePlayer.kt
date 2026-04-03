@@ -511,10 +511,12 @@ private fun newLivePlayer(
     }
 }
 
+
 private fun encodeUserInfoIfNeed(uri: String): String {
   if (uri.isEmpty()) return uri
 
   val androidUri = try {
+    @SuppressLint("UseKtx")
     Uri.parse(uri)
   } catch (_: Exception) {
     return uri
