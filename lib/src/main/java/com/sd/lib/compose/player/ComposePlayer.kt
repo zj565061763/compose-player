@@ -70,6 +70,7 @@ interface ComposePlayer {
   companion object {
     fun create(
       context: Context,
+      /** 播放错误，重试间隔（毫秒） */
       retryOnErrorInterval: Long = 0,
     ): ComposePlayer {
       return PlayerImpl(
@@ -87,9 +88,14 @@ interface ComposePlayerRtsp : ComposePlayer {
     @SuppressLint("UnsafeOptInUsageError")
     fun create(
       context: Context,
+      /** 是否强制使用TCP */
       forceUseRtpTcp: Boolean = true,
+      /** 是否禁用音频 */
       disableAudio: Boolean = true,
+      /** 播放错误，重试间隔（毫秒） */
       retryOnErrorInterval: Long = 5000,
+      /** 追帧（毫秒） */
+      chaseLatency: Long = 200,
     ): ComposePlayerRtsp {
       val rtspSourceFactory = RtspMediaSource.Factory()
         .setForceUseRtpTcp(forceUseRtpTcp)
@@ -103,6 +109,7 @@ interface ComposePlayerRtsp : ComposePlayer {
           setMediaSource(mediaSource)
         },
         retryOnErrorInterval = retryOnErrorInterval,
+        chaseLatency = chaseLatency,
       )
     }
   }
@@ -364,7 +371,7 @@ private class RtspPlayerImpl(
   playerProvider: (Context) -> ExoPlayer,
   setMedia: ExoPlayer.(String) -> Unit,
   retryOnErrorInterval: Long,
-  private val chaseLatency: Long = 200,
+  private val chaseLatency: Long,
 ) : PlayerImpl(
   context = context,
   playerProvider = playerProvider,
