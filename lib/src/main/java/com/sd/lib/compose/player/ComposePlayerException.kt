@@ -25,7 +25,7 @@ internal class ComposePlayerExceptionPlaybackException(
   override fun toString(): String {
     return buildString {
       append("(${exception.errorCode})")
-      exception.cause?.also { cause -> append(":").append(cause) }
+      exception.cause?.also { cause -> append(cause) }
     }
   }
 }
