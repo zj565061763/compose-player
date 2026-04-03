@@ -64,7 +64,7 @@ interface ComposePlayer {
     open fun onPlayerBufferStateChanged(state: ComposePlayerBufferState) = Unit
 
     /** 播放器错误 */
-    open fun onPlayerError(error: PlaybackException) = Unit
+    open fun onPlayerError(error: ComposePlayerException) = Unit
   }
 
   companion object {
@@ -76,7 +76,7 @@ interface ComposePlayer {
       return PlayerImpl(
         context = context.applicationContext,
         playerProvider = { ctx -> ExoPlayer.Builder(ctx).build() },
-        setMedia = { uri -> setMediaItem(MediaItem.fromUri(encodeUserInfoIfNeed(uri))) },
+        setMedia = { uri -> setMediaItem(MediaItem.fromUri(uri)) },
         retryOnErrorInterval = retryOnErrorInterval,
       )
     }
@@ -104,8 +104,7 @@ interface ComposePlayerRtsp : ComposePlayer {
         context = context.applicationContext,
         playerProvider = { ctx -> newLivePlayer(ctx, disableAudio = disableAudio) },
         setMedia = { uri ->
-          val mediaItem = MediaItem.fromUri(encodeUserInfoIfNeed(uri))
-          val mediaSource = rtspSourceFactory.createMediaSource(mediaItem)
+          val mediaSource = rtspSourceFactory.createMediaSource(MediaItem.fromUri(uri))
           setMediaSource(mediaSource)
         },
         retryOnErrorInterval = retryOnErrorInterval,
@@ -240,8 +239,14 @@ open class PlayerImpl(
     }
 
     if (player.playbackState == Player.STATE_IDLE) {
-      setMedia(player, dataSource)
-      player.prepare()
+      runCatching {
+        encodeUserInfoIfNeed(dataSource)
+      }.onSuccess { uri ->
+        setMedia(player, uri)
+        player.prepare()
+      }.onFailure { e ->
+        _callback?.onPlayerError(ComposePlayerExceptionDataSource(cause = e))
+      }
     }
   }
 
@@ -323,7 +328,7 @@ open class PlayerImpl(
     } else {
       _requireState = ComposePlayerState.Idle
     }
-    _callback?.onPlayerError(error)
+    _callback?.onPlayerError(ComposePlayerExceptionPlaybackException(error))
   }
 
   private fun setPlayerState(state: ComposePlayerState) {
@@ -511,16 +516,11 @@ private fun newLivePlayer(
     }
 }
 
-
 private fun encodeUserInfoIfNeed(uri: String): String {
   if (uri.isEmpty()) return uri
 
-  val androidUri = try {
-    @SuppressLint("UseKtx")
-    Uri.parse(uri)
-  } catch (_: Exception) {
-    return uri
-  }
+  @SuppressLint("UseKtx")
+  val androidUri = Uri.parse(uri)
 
   // 获取原始的 encodedUserInfo（带百分比编码的），如果本身没带凭据则直接返回
   val rawEncodedUserInfo = androidUri.encodedUserInfo ?: return uri
@@ -561,12 +561,8 @@ private fun encodeUserInfoIfNeed(uri: String): String {
     "$newUserInfo@$authority"
   }
 
-  return try {
-    androidUri.buildUpon()
-      .encodedAuthority(newAuthority)
-      .build()
-      .toString()
-  } catch (_: Exception) {
-    uri
-  }
+  return androidUri.buildUpon()
+    .encodedAuthority(newAuthority)
+    .build()
+    .toString()
 }

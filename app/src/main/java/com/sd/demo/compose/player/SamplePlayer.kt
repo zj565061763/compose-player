@@ -20,10 +20,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.media3.common.PlaybackException
 import com.sd.demo.compose.player.theme.AppTheme
 import com.sd.lib.compose.player.ComposePlayer
 import com.sd.lib.compose.player.ComposePlayerBufferState
+import com.sd.lib.compose.player.ComposePlayerException
 import com.sd.lib.compose.player.ComposePlayerState
 import com.sd.lib.compose.player.ComposePlayerView
 import com.sd.lib.compose.player.ComposePlayerViewSurfaceType
@@ -63,9 +63,9 @@ private fun Content(
         }
       }
 
-      override fun onPlayerError(error: PlaybackException) {
+      override fun onPlayerError(error: ComposePlayerException) {
         logMsg { "onPlayerError:$error" }
-        errorTips = "(${error.errorCode})${error.errorCodeName}"
+        errorTips = error.toString()
       }
     })
   }
