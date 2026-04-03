@@ -76,7 +76,7 @@ interface ComposePlayer {
       return PlayerImpl(
         context = context.applicationContext,
         playerProvider = { ctx -> ExoPlayer.Builder(ctx).build() },
-        setMedia = { uri -> setMediaItem(MediaItem.fromUri(encodeUriIfNeed(uri))) },
+        setMedia = { uri -> setMediaItem(MediaItem.fromUri(encodeUserInfoIfNeed(uri))) },
         retryOnErrorInterval = retryOnErrorInterval,
       )
     }
@@ -104,7 +104,7 @@ interface ComposePlayerRtsp : ComposePlayer {
         context = context.applicationContext,
         playerProvider = { ctx -> newLivePlayer(ctx, disableAudio = disableAudio) },
         setMedia = { uri ->
-          val mediaItem = MediaItem.fromUri(encodeUriIfNeed(uri))
+          val mediaItem = MediaItem.fromUri(encodeUserInfoIfNeed(uri))
           val mediaSource = rtspSourceFactory.createMediaSource(mediaItem)
           setMediaSource(mediaSource)
         },
@@ -130,8 +130,13 @@ enum class ComposePlayerState {
 }
 
 enum class ComposePlayerBufferState {
+  /** 空闲 */
   None,
+
+  /** 缓冲中 */
   Buffering,
+
+  /** 准备完毕 */
   Ready,
 }
 
@@ -506,17 +511,60 @@ private fun newLivePlayer(
     }
 }
 
-private fun encodeUriIfNeed(uri: String): String {
+private fun encodeUserInfoIfNeed(uri: String): String {
   if (uri.isEmpty()) return uri
-  val androidUri = Uri.parse(uri)
-  val userInfo = androidUri.userInfo ?: return uri
-  if (userInfo.isEmpty()) return uri
 
-  val parts = userInfo.split(":", limit = 2)
+  val androidUri = try {
+    Uri.parse(uri)
+  } catch (_: Exception) {
+    return uri
+  }
+
+  // 获取原始的 encodedUserInfo（带百分比编码的），如果本身没带凭据则直接返回
+  val rawEncodedUserInfo = androidUri.encodedUserInfo ?: return uri
+  if (rawEncodedUserInfo.isEmpty()) return uri
+
+  // 获取解码后的 userInfo 进行拆分，如果为空也返回
+  val decodedUserInfo = androidUri.userInfo ?: return uri
+  if (decodedUserInfo.isEmpty()) return uri
+
+  // 拆分用户名和密码
+  val parts = decodedUserInfo.split(":", limit = 2)
   val username = parts[0]
-  val password = if (parts.size > 1) parts[1] else ""
+  val password = if (parts.size > 1) parts[1] else null
 
+  // 分别对用户名和密码进行标准的百分比编码
   val encodedUsername = Uri.encode(username)
-  val encodedPassword = Uri.encode(password)
-  return uri.replaceFirst(userInfo, "$encodedUsername:$encodedPassword")
+  val encodedPassword = password?.let { Uri.encode(it) }
+
+  // 重新组合编码后的 UserInfo
+  val newUserInfo = if (encodedPassword != null) {
+    "$encodedUsername:$encodedPassword"
+  } else {
+    encodedUsername
+  }
+
+  // 如果编码后和原始的一样，说明不需要处理
+  if (newUserInfo == rawEncodedUserInfo) return uri
+
+  // 获取原始的 encodedAuthority (例如 "user:pass@192.168.1.1:554")
+  val authority = androidUri.encodedAuthority ?: return uri
+
+  val index = authority.lastIndexOf('@')
+  val newAuthority = if (index >= 0) {
+    // 替换 '@' 之前的部分，保留 '@' 及其之后的部分（host:port）
+    newUserInfo + authority.substring(index)
+  } else {
+    // 理论上 rawEncodedUserInfo 不为空时 index 必定 >= 0，这里做个保险
+    "$newUserInfo@$authority"
+  }
+
+  return try {
+    androidUri.buildUpon()
+      .encodedAuthority(newAuthority)
+      .build()
+      .toString()
+  } catch (_: Exception) {
+    uri
+  }
 }
