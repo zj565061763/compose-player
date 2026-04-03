@@ -3,6 +3,10 @@ package com.sd.lib.compose.player
 import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Handler
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
@@ -14,6 +18,18 @@ import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
 import androidx.media3.exoplayer.video.VideoRendererEventListener
+
+@Composable
+fun rememberComposePlayerRtsp(
+  factory: (Context) -> ComposePlayerRtsp = { ComposePlayerRtsp.create(it) },
+): ComposePlayerRtsp {
+  val context = LocalContext.current
+  return remember { factory(context) }.also { player ->
+    DisposableEffect(player) {
+      onDispose { player.release() }
+    }
+  }
+}
 
 interface ComposePlayerRtsp : ComposePlayer {
   companion object {

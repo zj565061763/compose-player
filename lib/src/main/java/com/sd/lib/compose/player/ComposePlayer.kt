@@ -7,9 +7,13 @@ import android.os.Handler
 import android.os.Looper
 import androidx.annotation.CallSuper
 import androidx.annotation.OptIn
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -18,6 +22,18 @@ import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+
+@Composable
+fun rememberComposePlayer(
+  factory: (Context) -> ComposePlayer = { ComposePlayer.create(it) },
+): ComposePlayer {
+  val context = LocalContext.current
+  return remember { factory(context) }.also { player ->
+    DisposableEffect(player) {
+      onDispose { player.release() }
+    }
+  }
+}
 
 interface ComposePlayer {
   val playerStateFlow: StateFlow<ComposePlayerState>
