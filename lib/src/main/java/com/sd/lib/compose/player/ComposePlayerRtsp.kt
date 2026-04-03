@@ -25,7 +25,7 @@ interface ComposePlayerRtsp : ComposePlayer {
       /** 是否禁用音频 */
       disableAudio: Boolean = true,
       /** 播放错误，重试间隔（毫秒） */
-      retryOnErrorInterval: Long = 5000,
+      retryOnErrorInterval: Long = 10000,
       /** 追帧（毫秒） */
       chaseLatency: Long = 200,
     ): ComposePlayerRtsp {
