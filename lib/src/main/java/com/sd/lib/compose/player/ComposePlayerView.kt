@@ -36,3 +36,8 @@ fun ComposePlayerView(
     },
   )
 }
+
+enum class ComposePlayerViewSurfaceType {
+  SurfaceView,
+  TextureView,
+}
