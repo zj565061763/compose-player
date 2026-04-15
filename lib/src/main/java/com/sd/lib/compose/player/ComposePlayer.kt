@@ -79,7 +79,7 @@ interface ComposePlayer {
     fun create(
       context: Context,
       /** 播放错误，重试间隔（毫秒） */
-      retryOnErrorInterval: Long = 0,
+      retryOnErrorInterval: Long = 5000,
     ): ComposePlayer {
       return PlayerImpl(
         context = context.applicationContext,
