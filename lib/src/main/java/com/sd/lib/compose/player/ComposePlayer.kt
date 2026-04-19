@@ -40,6 +40,9 @@ interface ComposePlayer {
 
   val bufferStateFlow: StateFlow<ComposePlayerBufferState>
 
+  /** 是否静音 */
+  val isMutedFlow: StateFlow<Boolean>
+
   /** 回调对象 */
   fun setCallback(callback: Callback)
 
@@ -60,6 +63,9 @@ interface ComposePlayer {
 
   /** 当前播放进度时间点 */
   fun getCurrentPosition(): Long
+
+  /** 设置静音 */
+  fun setMute(mute: Boolean)
 
   /** 释放 */
   fun release()
@@ -127,6 +133,7 @@ internal open class PlayerImpl(
 
   private val _playerStateFlow: MutableStateFlow<ComposePlayerState> = MutableStateFlow(ComposePlayerState.Idle)
   private val _bufferStateFlow: MutableStateFlow<ComposePlayerBufferState> = MutableStateFlow(ComposePlayerBufferState.None)
+  private val _isMutedFlow: MutableStateFlow<Boolean> = MutableStateFlow(false)
 
   private var _requireState: ComposePlayerState? = null
   private var _dataSource = ""
@@ -140,6 +147,7 @@ internal open class PlayerImpl(
 
   override val playerStateFlow: StateFlow<ComposePlayerState> = _playerStateFlow.asStateFlow()
   override val bufferStateFlow: StateFlow<ComposePlayerBufferState> = _bufferStateFlow.asStateFlow()
+  override val isMutedFlow: StateFlow<Boolean> = _isMutedFlow.asStateFlow()
 
   override fun setCallback(callback: ComposePlayer.Callback) {
     _callback = callback
@@ -180,6 +188,13 @@ internal open class PlayerImpl(
     return _exoPlayer?.currentPosition ?: -1
   }
 
+  override fun setMute(mute: Boolean) {
+    if (_isMutedFlow.value != mute) {
+      _isMutedFlow.value = mute
+      _exoPlayer?.extSetMute(mute)
+    }
+  }
+
   @CallSuper
   override fun release() {
     _requireState = null
@@ -212,6 +227,7 @@ internal open class PlayerImpl(
     val player = _exoPlayer ?: playerProvider(context).also { player ->
       _exoPlayer = player
       player.playWhenReady = false
+      if (_isMutedFlow.value) player.extSetMute(true)
       player.addListener(this@PlayerImpl)
     }
 

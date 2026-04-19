@@ -194,10 +194,7 @@ private fun newLivePlayer(
     .build()
     .also { player ->
       if (disableAudio) {
-        player.trackSelectionParameters = player.trackSelectionParameters
-          .buildUpon()
-          .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
-          .build()
+        player.extSetMute(true)
       }
     }
 }
