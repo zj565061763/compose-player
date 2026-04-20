@@ -268,6 +268,7 @@ internal open class PlayerImpl(
     prepare()
     _exoPlayer?.also { player ->
       player.pause()
+      setPlayerState(ComposePlayerState.Paused)
     }
   }
 
