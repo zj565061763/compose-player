@@ -50,6 +50,7 @@ private fun Content(
   var errorTips by remember { mutableStateOf("") }
 
   LaunchedEffect(player) {
+    player.setDataSource("asset:///demo.mp4")
     player.setCallback(object : ComposePlayer.Callback() {
       override fun onPlayerStateChanged(state: ComposePlayerState) {
         logMsg { "onPlayerStateChanged:$state" }
@@ -98,12 +99,6 @@ private fun Content(
         .fillMaxWidth()
         .weight(1f)
     ) {
-      Button(onClick = {
-        player.setDataSource("asset:///demo.mp4")
-      }) {
-        Text("setDataSource")
-      }
-
       Button(onClick = {
         player.play()
       }) {
