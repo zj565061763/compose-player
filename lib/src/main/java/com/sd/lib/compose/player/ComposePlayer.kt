@@ -14,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -22,6 +23,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 
 @Composable
 fun rememberComposePlayer(
@@ -63,6 +65,9 @@ interface ComposePlayer {
 
   /** 当前播放进度时间点 */
   fun getCurrentPosition(): Long
+
+  /** 获取总时长 */
+  fun getDuration(): Long
 
   /** 设置静音 */
   fun setMute(mute: Boolean)
@@ -120,6 +125,16 @@ enum class ComposePlayerBufferState {
 
   /** 准备完毕 */
   Ready,
+}
+
+/** 挂起等待播放器处于指定状态[state] */
+suspend fun ComposePlayer.awaitPlayerState(state: ComposePlayerState) {
+  playerStateFlow.first { it == state }
+}
+
+/** 挂起等待缓冲准备完毕[ComposePlayerBufferState.Ready] */
+suspend fun ComposePlayer.awaitBufferReady() {
+  bufferStateFlow.first { it == ComposePlayerBufferState.Ready }
 }
 
 @OptIn(UnstableApi::class)
@@ -186,6 +201,11 @@ internal open class PlayerImpl(
 
   override fun getCurrentPosition(): Long {
     return _exoPlayer?.currentPosition ?: -1
+  }
+
+  override fun getDuration(): Long {
+    val duration = _exoPlayer?.duration ?: -1L
+    return if (duration == C.TIME_UNSET) -1L else duration
   }
 
   override fun setMute(mute: Boolean) {
