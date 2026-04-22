@@ -183,8 +183,8 @@ private fun VideoProgressBar(
 
   LaunchedEffect(player) {
     while (true) {
-      val current = player.getCurrentPosition()
       val total = player.getDuration()
+      val current = player.getCurrentPosition()
       progress = if (total > 0) current / total.toFloat() else 0f
       delay(200)
     }
