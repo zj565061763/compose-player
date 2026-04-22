@@ -203,8 +203,22 @@ internal open class PlayerImpl(
   }
 
   override fun seekTo(positionMs: Long) {
-    _exoPlayer?.seekTo(positionMs)
-    _seekToPositionMs = if (_exoPlayer?.currentPosition == positionMs) null else positionMs
+    val player = _exoPlayer
+    if (player == null) {
+      _seekToPositionMs = positionMs
+      return
+    }
+
+    val duration = getDuration()
+    if (duration <= 0) {
+      _seekToPositionMs = positionMs
+      return
+    }
+
+    val targetPosition = positionMs.coerceIn(0L, duration)
+    player.seekTo(targetPosition)
+
+    _seekToPositionMs = if (player.currentPosition == targetPosition) null else targetPosition
   }
 
   override fun getCurrentPosition(): Long {
@@ -292,6 +306,7 @@ internal open class PlayerImpl(
 
   /** 停止播放 */
   protected fun stopPlayer() {
+    _seekToPositionMs = null
     _exoPlayer?.also { player ->
       if (player.playbackState != Player.STATE_IDLE) {
         player.stop()
@@ -341,12 +356,16 @@ internal open class PlayerImpl(
       }
       Player.STATE_READY -> {
         stopRetry()
-        _seekToPositionMs?.also { seekTo(it) }
+        _seekToPositionMs?.also {
+          _seekToPositionMs = null
+          seekTo(it)
+        }
         updatePlayer()
       }
       Player.STATE_ENDED -> {
         _requireState = ComposePlayerState.Ended
         setPlayerState(ComposePlayerState.Ended)
+        _seekToPositionMs = null
       }
       else -> {}
     }
