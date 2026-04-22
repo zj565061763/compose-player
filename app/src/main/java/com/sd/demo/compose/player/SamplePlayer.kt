@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -118,8 +120,6 @@ private fun Content(
         Text(text = errorTips, color = Color.Red)
       }
 
-
-
       Column(
         modifier = Modifier
           .fillMaxWidth()
@@ -128,6 +128,7 @@ private fun Content(
         horizontalAlignment = Alignment.CenterHorizontally,
       ) {
         VideoControlView(player = player)
+        VideoSpeedView(player = player)
         VideoProgressView(player = player)
       }
     }
@@ -180,6 +181,28 @@ private fun VideoControlView(
       }
     }) {
       Text(text = "⏩")
+    }
+  }
+}
+
+/** 视频倍速 */
+@Composable
+private fun VideoSpeedView(
+  modifier: Modifier = Modifier,
+  player: ComposePlayer,
+) {
+  val speed by player.speedFlow.collectAsStateWithLifecycle()
+  val listSpeed = remember { listOf(0.5f, 1.0f, 1.5f) }
+  LazyRow(modifier = modifier) {
+    items(listSpeed) { item ->
+      TextButton(onClick = {
+        player.setSpeed(item)
+      }) {
+        Text(
+          text = item.toString(),
+          color = if (item == speed) Color.Green else Color.Unspecified,
+        )
+      }
     }
   }
 }
