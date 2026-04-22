@@ -208,7 +208,7 @@ internal open class PlayerImpl(
   }
 
   override fun getCurrentPosition(): Long {
-    return _exoPlayer?.currentPosition ?: -1
+    return _exoPlayer?.currentPosition ?: -1L
   }
 
   override fun getDuration(): Long {
