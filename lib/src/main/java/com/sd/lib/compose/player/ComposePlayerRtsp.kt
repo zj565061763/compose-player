@@ -9,7 +9,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
-import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -144,14 +143,11 @@ private class RtspPlayerImpl(
         val currentPosition = player.currentPosition
         if (bufferedPosition != C.TIME_UNSET && currentPosition != C.TIME_UNSET) {
           val drift = bufferedPosition - currentPosition
+          val userSpeed = speedFlow.value
           if (drift > chaseLatency) {
-            if (player.playbackParameters.speed != 1.2f) {
-              player.playbackParameters = PlaybackParameters(1.2f)
-            }
+            player.extSetSpeed(userSpeed * 1.2f)
           } else if (drift < (chaseLatency / 2)) {
-            if (player.playbackParameters.speed != 1.0f) {
-              player.playbackParameters = PlaybackParameters(1.0f)
-            }
+            player.extSetSpeed(userSpeed)
           }
         }
         handler.postDelayed(this, chaseLatency / 2)

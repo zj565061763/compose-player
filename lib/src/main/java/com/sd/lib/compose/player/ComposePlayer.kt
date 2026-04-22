@@ -45,6 +45,9 @@ interface ComposePlayer {
   /** 是否静音 */
   val isMutedFlow: StateFlow<Boolean>
 
+  /** 播放倍速 */
+  val speedFlow: StateFlow<Float>
+
   /** 回调对象 */
   fun setCallback(callback: Callback)
 
@@ -71,6 +74,9 @@ interface ComposePlayer {
 
   /** 设置静音 */
   fun setMute(mute: Boolean)
+
+  /** 设置倍速 */
+  fun setSpeed(speed: Float)
 
   /** 释放 */
   fun release()
@@ -149,6 +155,7 @@ internal open class PlayerImpl(
   private val _playerStateFlow: MutableStateFlow<ComposePlayerState> = MutableStateFlow(ComposePlayerState.Idle)
   private val _bufferStateFlow: MutableStateFlow<ComposePlayerBufferState> = MutableStateFlow(ComposePlayerBufferState.None)
   private val _isMutedFlow: MutableStateFlow<Boolean> = MutableStateFlow(false)
+  private val _speedFlow: MutableStateFlow<Float> = MutableStateFlow(1.0f)
 
   private var _requireState: ComposePlayerState? = null
   private var _dataSource = ""
@@ -163,6 +170,7 @@ internal open class PlayerImpl(
   override val playerStateFlow: StateFlow<ComposePlayerState> = _playerStateFlow.asStateFlow()
   override val bufferStateFlow: StateFlow<ComposePlayerBufferState> = _bufferStateFlow.asStateFlow()
   override val isMutedFlow: StateFlow<Boolean> = _isMutedFlow.asStateFlow()
+  override val speedFlow: StateFlow<Float> = _speedFlow.asStateFlow()
 
   override fun setCallback(callback: ComposePlayer.Callback) {
     _callback = callback
@@ -215,6 +223,13 @@ internal open class PlayerImpl(
     }
   }
 
+  override fun setSpeed(speed: Float) {
+    if (_speedFlow.value != speed) {
+      _speedFlow.value = speed
+      _exoPlayer?.extSetSpeed(speed)
+    }
+  }
+
   @CallSuper
   override fun release() {
     _requireState = null
@@ -248,6 +263,7 @@ internal open class PlayerImpl(
       _exoPlayer = player
       player.playWhenReady = false
       if (_isMutedFlow.value) player.extSetMute(true)
+      if (_speedFlow.value != 1.0f) player.extSetSpeed(_speedFlow.value)
       player.addListener(this@PlayerImpl)
     }
 
