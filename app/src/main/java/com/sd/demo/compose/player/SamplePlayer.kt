@@ -98,9 +98,16 @@ private fun Content(
 
       Text(
         modifier = Modifier
-          .align(Alignment.TopCenter)
+          .align(Alignment.TopStart)
           .safeDrawingPadding(),
         text = playerState.name,
+      )
+
+      VideoDurationView(
+        modifier = Modifier
+          .align(Alignment.TopEnd)
+          .safeDrawingPadding(),
+        player = player,
       )
 
       if (bufferState == ComposePlayerBufferState.Buffering) {
@@ -111,6 +118,8 @@ private fun Content(
         Text(text = errorTips, color = Color.Red)
       }
 
+
+
       Column(
         modifier = Modifier
           .fillMaxWidth()
@@ -118,15 +127,16 @@ private fun Content(
           .padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
       ) {
-        VideoControlBar(player = player)
-        VideoProgressBar(player = player)
+        VideoControlView(player = player)
+        VideoProgressView(player = player)
       }
     }
   }
 }
 
+/** 视频控制 */
 @Composable
-private fun VideoControlBar(
+private fun VideoControlView(
   modifier: Modifier = Modifier,
   player: ComposePlayer,
 ) {
@@ -174,8 +184,33 @@ private fun VideoControlBar(
   }
 }
 
+/** 视频时长 */
 @Composable
-private fun VideoProgressBar(
+private fun VideoDurationView(
+  modifier: Modifier = Modifier,
+  player: ComposePlayer,
+) {
+  var time by remember { mutableStateOf("") }
+
+  val duration by player.durationFlow.collectAsStateWithLifecycle()
+  LaunchedEffect(player, duration) {
+    while (true) {
+      time = "${formatDuration(player.getCurrentPosition())}/${formatDuration(duration)}"
+      delay(200)
+    }
+  }
+
+  if (time.isNotEmpty()) {
+    Text(
+      modifier = modifier,
+      text = time,
+    )
+  }
+}
+
+/** 视频进度 */
+@Composable
+private fun VideoProgressView(
   modifier: Modifier = Modifier,
   player: ComposePlayer,
 ) {
@@ -201,6 +236,14 @@ private fun VideoProgressBar(
       }
     },
   )
+}
+
+/** 格式化时长 */
+private fun formatDuration(ms: Long): String {
+  val totalSeconds = (ms / 1000).coerceAtLeast(0)
+  val minutes = totalSeconds / 60
+  val seconds = totalSeconds % 60
+  return "%02d:%02d".format(minutes, seconds)
 }
 
 @Preview
