@@ -217,8 +217,7 @@ internal open class PlayerImpl(
 
     val targetPosition = positionMs.coerceIn(0L, duration)
     player.seekTo(targetPosition)
-
-    _seekToPositionMs = if (player.currentPosition == targetPosition) null else targetPosition
+    _seekToPositionMs = null
   }
 
   override fun getCurrentPosition(): Long {
@@ -356,16 +355,12 @@ internal open class PlayerImpl(
       }
       Player.STATE_READY -> {
         stopRetry()
-        _seekToPositionMs?.also {
-          _seekToPositionMs = null
-          seekTo(it)
-        }
+        _seekToPositionMs?.also { seekTo(it) }
         updatePlayer()
       }
       Player.STATE_ENDED -> {
         _requireState = ComposePlayerState.Ended
         setPlayerState(ComposePlayerState.Ended)
-        _seekToPositionMs = null
       }
       else -> {}
     }
