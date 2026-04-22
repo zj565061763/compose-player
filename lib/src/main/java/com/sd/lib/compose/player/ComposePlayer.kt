@@ -42,6 +42,9 @@ interface ComposePlayer {
 
   val bufferStateFlow: StateFlow<ComposePlayerBufferState>
 
+  /** 总时长（毫秒），-1表示未知 */
+  val durationFlow: StateFlow<Long>
+
   /** 是否静音 */
   val isMutedFlow: StateFlow<Boolean>
 
@@ -69,7 +72,7 @@ interface ComposePlayer {
   /** 当前播放进度时间点 */
   fun getCurrentPosition(): Long
 
-  /** 获取总时长 */
+  /** 总时长（毫秒） */
   fun getDuration(): Long
 
   /** 设置静音 */
@@ -143,6 +146,13 @@ suspend fun ComposePlayer.awaitBufferReady() {
   bufferStateFlow.first { it == ComposePlayerBufferState.Ready }
 }
 
+/** 挂起等待获取总时长 */
+suspend fun ComposePlayer.awaitDuration(
+  predicate: suspend (Long) -> Boolean = { it > 0 },
+): Long {
+  return durationFlow.first(predicate)
+}
+
 @OptIn(UnstableApi::class)
 internal open class PlayerImpl(
   private val context: Context,
@@ -154,6 +164,8 @@ internal open class PlayerImpl(
 
   private val _playerStateFlow: MutableStateFlow<ComposePlayerState> = MutableStateFlow(ComposePlayerState.Idle)
   private val _bufferStateFlow: MutableStateFlow<ComposePlayerBufferState> = MutableStateFlow(ComposePlayerBufferState.None)
+
+  private val _durationFlow: MutableStateFlow<Long> = MutableStateFlow(-1L)
   private val _isMutedFlow: MutableStateFlow<Boolean> = MutableStateFlow(false)
   private val _speedFlow: MutableStateFlow<Float> = MutableStateFlow(1.0f)
 
@@ -169,6 +181,7 @@ internal open class PlayerImpl(
 
   override val playerStateFlow: StateFlow<ComposePlayerState> = _playerStateFlow.asStateFlow()
   override val bufferStateFlow: StateFlow<ComposePlayerBufferState> = _bufferStateFlow.asStateFlow()
+  override val durationFlow: StateFlow<Long> = _durationFlow.asStateFlow()
   override val isMutedFlow: StateFlow<Boolean> = _isMutedFlow.asStateFlow()
   override val speedFlow: StateFlow<Float> = _speedFlow.asStateFlow()
 
@@ -245,15 +258,19 @@ internal open class PlayerImpl(
 
   @CallSuper
   override fun release() {
+    stopRetry()
+
     _requireState = null
     _exoPlayer?.also {
       _exoPlayer = null
       it.removeListener(this@PlayerImpl)
       it.release()
     }
-    stopRetry()
+
     _dataSource = ""
+    _seekToPositionMs = null
     _callback = null
+    _durationFlow.value = -1L
     setBufferState(ComposePlayerBufferState.None)
     setPlayerState(ComposePlayerState.Idle)
   }
@@ -352,11 +369,13 @@ internal open class PlayerImpl(
     when (playbackState) {
       Player.STATE_IDLE -> {
         setPlayerState(ComposePlayerState.Idle)
+        _durationFlow.value = -1L
       }
       Player.STATE_READY -> {
         stopRetry()
         _seekToPositionMs?.also { seekTo(it) }
         updatePlayer()
+        _durationFlow.value = getDuration()
       }
       Player.STATE_ENDED -> {
         _requireState = ComposePlayerState.Ended
