@@ -4,6 +4,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,19 +17,21 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -63,7 +67,7 @@ private fun Content(
   var errorTips by remember { mutableStateOf("") }
 
   LaunchedEffect(player) {
-    player.setDataSource("asset:///demo.mp4")
+    player.setDataSource("asset:///1.mp4")
     player.setLooping(true)
     player.setCallback(object : ComposePlayer.Callback() {
       override fun onPlayerStateChanged(state: ComposePlayerState) {
@@ -226,32 +230,51 @@ private fun VideoDurationView(
 }
 
 /** 视频进度 */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun VideoProgressView(
   modifier: Modifier = Modifier,
   player: ComposePlayer,
 ) {
-  var progress by remember { mutableFloatStateOf(0f) }
+  // 视频总时长
+  val durationState = player.durationFlow.collectAsStateWithLifecycle()
+  val duration = if (LocalInspectionMode.current) 10000 else durationState.value
 
-  LaunchedEffect(player) {
-    while (true) {
-      val total = player.getDuration()
-      val current = player.getCurrentPosition()
-      progress = if (total > 0) current / total.toFloat() else 0f
-      delay(200)
+  // 如果未获取到时长，不显示控件
+  if (duration <= 0) return
+
+  val sliderState = remember(duration) {
+    SliderState(
+      value = player.getCurrentPosition().toFloat(),
+      valueRange = 0f..duration.toFloat(),
+    )
+  }
+
+  // 设置拖动结束回调
+  sliderState.onValueChangeFinished = remember(player) {
+    {
+      player.seekTo(sliderState.value.toLong())
+    }
+  }
+
+  val playerState by player.playerStateFlow.collectAsStateWithLifecycle()
+  val interactionSource = remember { MutableInteractionSource() }
+  val isDragged by interactionSource.collectIsDraggedAsState()
+
+  // 如果没有拖动且正在播放，则更新进度
+  if (!isDragged && playerState == ComposePlayerState.Playing) {
+    LaunchedEffect(player) {
+      while (true) {
+        sliderState.value = player.getCurrentPosition().toFloat()
+        delay(200)
+      }
     }
   }
 
   Slider(
     modifier = modifier.fillMaxWidth(),
-    value = progress,
-    onValueChange = { value ->
-      val total = player.getDuration()
-      if (total > 0) {
-        val target = total * value
-        player.seekTo(target.toLong())
-      }
-    },
+    state = sliderState,
+    interactionSource = interactionSource,
   )
 }
 
