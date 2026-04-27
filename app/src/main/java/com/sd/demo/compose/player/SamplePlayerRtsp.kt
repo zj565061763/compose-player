@@ -53,6 +53,7 @@ private fun Content(
   val bufferState by player.bufferStateFlow.collectAsStateWithLifecycle()
 
   LaunchedEffect(player) {
+    player.setDataSource(DATA_SOURCE)
     player.setCallback(object : ComposePlayer.Callback() {
       override fun onPlayerStateChanged(state: ComposePlayerState) {
         logMsg { "onPlayerStateChanged:$state" }
@@ -104,12 +105,6 @@ private fun Content(
         .weight(1f)
     ) {
       Button(onClick = {
-        player.setDataSource(DATA_SOURCE)
-      }) {
-        Text("setDataSource")
-      }
-
-      Button(onClick = {
         player.play()
       }) {
         Text("play")
@@ -119,18 +114,6 @@ private fun Content(
         player.stop()
       }) {
         Text("stop")
-      }
-
-      Button(onClick = {
-        player.seekTo(10_000)
-      }) {
-        Text("seekTo")
-      }
-
-      Button(onClick = {
-        logMsg { "getCurrentPosition:${player.getCurrentPosition()}" }
-      }) {
-        Text("getCurrentPosition")
       }
     }
   }
