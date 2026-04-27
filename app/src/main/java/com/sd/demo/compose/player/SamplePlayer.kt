@@ -38,6 +38,7 @@ import com.sd.lib.compose.player.ComposePlayerException
 import com.sd.lib.compose.player.ComposePlayerState
 import com.sd.lib.compose.player.ComposePlayerView
 import com.sd.lib.compose.player.rememberComposePlayer
+import com.sd.lib.compose.player.seekDelta
 import kotlinx.coroutines.delay
 
 class SamplePlayer : ComponentActivity() {
@@ -149,11 +150,7 @@ private fun VideoControlView(
   ) {
     // 快退
     TextButton(onClick = {
-      val current = player.getCurrentPosition()
-      if (current > 0) {
-        val target = current - 3000
-        player.seekTo(target)
-      }
+      player.seekDelta(-3000)
     }) {
       Text(text = "⏪")
     }
@@ -174,11 +171,7 @@ private fun VideoControlView(
 
     // 快进
     TextButton(onClick = {
-      val current = player.getCurrentPosition()
-      if (current > 0) {
-        val target = current + 3000
-        player.seekTo(target)
-      }
+      player.seekDelta(3000)
     }) {
       Text(text = "⏩")
     }

@@ -69,7 +69,7 @@ interface ComposePlayer {
   /** 移动进度到指定时间点 */
   fun seekTo(positionMs: Long)
 
-  /** 当前播放进度时间点 */
+  /** 当前播放进度时间点（毫秒） */
   fun getCurrentPosition(): Long
 
   /** 总时长（毫秒） */
@@ -153,6 +153,11 @@ suspend fun ComposePlayer.awaitDuration(
   return durationFlow.first(predicate)
 }
 
+/** 移动进度 */
+fun ComposePlayer.seekDelta(ms: Long) {
+  seekTo(getCurrentPosition() + ms)
+}
+
 @OptIn(UnstableApi::class)
 internal open class PlayerImpl(
   private val context: Context,
@@ -234,7 +239,7 @@ internal open class PlayerImpl(
   }
 
   override fun getCurrentPosition(): Long {
-    return _exoPlayer?.currentPosition ?: -1L
+    return (_exoPlayer?.currentPosition ?: 0L).coerceAtLeast(0L)
   }
 
   override fun getDuration(): Long {
