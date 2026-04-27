@@ -135,9 +135,10 @@ private fun Content(
       ) {
         VideoControlView(player = player)
         VideoSpeedView(player = player)
-        VideoProgressView(player = player)
       }
     }
+
+    VideoProgressView(player = player)
   }
 }
 
