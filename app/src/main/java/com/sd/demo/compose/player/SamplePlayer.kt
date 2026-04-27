@@ -67,7 +67,7 @@ private fun Content(
   var errorTips by remember { mutableStateOf("") }
 
   LaunchedEffect(player) {
-    player.setDataSource("asset:///1.mp4")
+    player.setDataSource("asset:///demo.mp4")
     player.setLooping(true)
     player.setCallback(object : ComposePlayer.Callback() {
       override fun onPlayerStateChanged(state: ComposePlayerState) {
