@@ -138,7 +138,10 @@ private fun Content(
       }
     }
 
-    VideoProgressView(player = player)
+    VideoProgressView(
+      modifier = Modifier.padding(horizontal = 16.dp),
+      player = player,
+    )
   }
 }
 
