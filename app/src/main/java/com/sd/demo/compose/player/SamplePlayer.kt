@@ -64,6 +64,7 @@ private fun Content(
 
   LaunchedEffect(player) {
     player.setDataSource("asset:///demo.mp4")
+    player.setLooping(true)
     player.setCallback(object : ComposePlayer.Callback() {
       override fun onPlayerStateChanged(state: ComposePlayerState) {
         logMsg { "onPlayerStateChanged:$state" }

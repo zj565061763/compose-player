@@ -51,6 +51,9 @@ interface ComposePlayer {
   /** 播放倍速 */
   val speedFlow: StateFlow<Float>
 
+  /** 是否循环播放 */
+  val isLoopingFlow: StateFlow<Boolean>
+
   /** 回调对象 */
   fun setCallback(callback: Callback)
 
@@ -80,6 +83,9 @@ interface ComposePlayer {
 
   /** 设置倍速 */
   fun setSpeed(speed: Float)
+
+  /** 设置循环播放 */
+  fun setLooping(looping: Boolean)
 
   /** 释放 */
   fun release()
@@ -173,6 +179,7 @@ internal open class PlayerImpl(
   private val _durationFlow: MutableStateFlow<Long> = MutableStateFlow(-1L)
   private val _isMutedFlow: MutableStateFlow<Boolean> = MutableStateFlow(false)
   private val _speedFlow: MutableStateFlow<Float> = MutableStateFlow(1.0f)
+  private val _isLoopingFlow: MutableStateFlow<Boolean> = MutableStateFlow(false)
 
   private var _requireState: ComposePlayerState? = null
   private var _dataSource = ""
@@ -189,6 +196,7 @@ internal open class PlayerImpl(
   override val durationFlow: StateFlow<Long> = _durationFlow.asStateFlow()
   override val isMutedFlow: StateFlow<Boolean> = _isMutedFlow.asStateFlow()
   override val speedFlow: StateFlow<Float> = _speedFlow.asStateFlow()
+  override val isLoopingFlow: StateFlow<Boolean> = _isLoopingFlow.asStateFlow()
 
   override fun setCallback(callback: ComposePlayer.Callback) {
     _callback = callback
@@ -259,6 +267,10 @@ internal open class PlayerImpl(
       _speedFlow.value = speed
       _exoPlayer?.extSetSpeed(speed)
     }
+  }
+
+  override fun setLooping(looping: Boolean) {
+    _isLoopingFlow.value = looping
   }
 
   @CallSuper
@@ -385,6 +397,7 @@ internal open class PlayerImpl(
       Player.STATE_ENDED -> {
         _requireState = ComposePlayerState.Ended
         setPlayerState(ComposePlayerState.Ended)
+        if (_isLoopingFlow.value) play()
       }
       else -> {}
     }
