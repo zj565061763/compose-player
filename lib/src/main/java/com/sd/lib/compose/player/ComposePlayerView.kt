@@ -23,7 +23,7 @@ fun ComposePlayerView(
   player: ComposePlayer,
   contentScale: ContentScale = ContentScale.Fit,
   surfaceType: ComposePlayerViewSurfaceType = ComposePlayerViewSurfaceType.TextureView,
-  rebindKeyProvider: @Composable () -> Any = { },
+  rebindKeyProvider: @Composable () -> Any = {},
 ) {
   require(player is PlayerImpl)
 
@@ -47,14 +47,14 @@ fun ComposePlayerView(
 
 /**
  * onResume时，重新绑定[ComposePlayer]和[ComposePlayerView]，
- * 适用于同一个[ComposePlayer]关联多个[ComposePlayerView]的使用场景
+ * 适用于同一个[ComposePlayer]关联多个页面[ComposePlayerView]的使用场景
  */
 @Composable
 fun composePlayerViewRebindKeyOnResume(key: Any? = Unit): Any {
   var resumeCount by remember(key) { mutableIntStateOf(0) }
   LifecycleResumeEffect(key) {
     resumeCount++
-    onPauseOrDispose { }
+    onPauseOrDispose {}
   }
   return resumeCount
 }
