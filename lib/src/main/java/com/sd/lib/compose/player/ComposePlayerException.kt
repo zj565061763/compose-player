@@ -6,16 +6,28 @@ import androidx.media3.common.PlaybackException
 /** 异常描述 */
 fun ComposePlayerException.desc(context: Context): String {
   return when (this) {
-    is ComposePlayerExceptionDataSourceBlank -> context.getString(R.string.lib_compose_player_ComposePlayerExceptionDataSourceBlank)
-    is ComposePlayerExceptionDataSource -> buildString {
-      append(context.getString(R.string.lib_compose_player_ComposePlayerExceptionDataSource))
-      if (cause != null) append(":").append(cause)
+    is ComposePlayerExceptionDataSourceBlank -> {
+      context.getString(R.string.lib_compose_player_ComposePlayerExceptionDataSourceBlank)
     }
-    is ComposePlayerExceptionAuth -> context.getString(R.string.lib_compose_player_ComposePlayerExceptionAuth)
-    is ComposePlayerExceptionPlaybackException -> buildString {
-      append("(${exception.errorCode})")
-      exception.cause?.also { cause -> append(cause) }
+
+    is ComposePlayerExceptionDataSource -> {
+      buildString {
+        append(context.getString(R.string.lib_compose_player_ComposePlayerExceptionDataSource))
+        if (cause != null) append(":").append(cause)
+      }
     }
+
+    is ComposePlayerExceptionAuth -> {
+      context.getString(R.string.lib_compose_player_ComposePlayerExceptionAuth)
+    }
+
+    is ComposePlayerExceptionPlaybackException -> {
+      buildString {
+        append("(${exception.errorCode})")
+        exception.cause?.also { cause -> append(cause) }
+      }
+    }
+
     else -> this.toString()
   }
 }
