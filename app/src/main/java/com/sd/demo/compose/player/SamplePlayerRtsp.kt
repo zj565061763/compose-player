@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sd.demo.compose.player.theme.AppTheme
 import com.sd.lib.compose.player.ComposePlayer
@@ -27,6 +28,7 @@ import com.sd.lib.compose.player.ComposePlayerBufferState
 import com.sd.lib.compose.player.ComposePlayerException
 import com.sd.lib.compose.player.ComposePlayerState
 import com.sd.lib.compose.player.ComposePlayerView
+import com.sd.lib.compose.player.desc
 import com.sd.lib.compose.player.rememberComposePlayerRtsp
 
 class SamplePlayerRtsp : ComponentActivity() {
@@ -47,6 +49,7 @@ private fun Content(
   modifier: Modifier = Modifier,
 ) {
   val player = rememberComposePlayerRtsp()
+  val context = LocalContext.current
 
   var errorTips by remember { mutableStateOf("") }
   val playerState by player.playerStateFlow.collectAsStateWithLifecycle()
@@ -67,8 +70,8 @@ private fun Content(
       }
 
       override fun onPlayerError(error: ComposePlayerException) {
-        logMsg { "onPlayerError:$error" }
-        errorTips = error.toString()
+        logMsg { "onPlayerError:${error.stackTraceToString()}" }
+        errorTips = error.desc(context)
       }
     })
   }

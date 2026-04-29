@@ -31,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -41,6 +42,7 @@ import com.sd.lib.compose.player.ComposePlayerBufferState
 import com.sd.lib.compose.player.ComposePlayerException
 import com.sd.lib.compose.player.ComposePlayerState
 import com.sd.lib.compose.player.ComposePlayerView
+import com.sd.lib.compose.player.desc
 import com.sd.lib.compose.player.rememberComposePlayer
 import com.sd.lib.compose.player.seekDelta
 import kotlinx.coroutines.delay
@@ -56,18 +58,21 @@ class SamplePlayer : ComponentActivity() {
   }
 }
 
+private const val DATA_SOURCE = "asset:///demo.mp4"
+
 @Composable
 private fun Content(
   modifier: Modifier = Modifier,
 ) {
   val player = rememberComposePlayer()
+  val context = LocalContext.current
 
   val playerState by player.playerStateFlow.collectAsStateWithLifecycle()
   val bufferState by player.bufferStateFlow.collectAsStateWithLifecycle()
   var errorTips by remember { mutableStateOf("") }
 
   LaunchedEffect(player) {
-    player.setDataSource("asset:///demo.mp4")
+    player.setDataSource(DATA_SOURCE)
     player.setLooping(true)
     player.setCallback(object : ComposePlayer.Callback() {
       override fun onPlayerStateChanged(state: ComposePlayerState) {
@@ -82,8 +87,8 @@ private fun Content(
       }
 
       override fun onPlayerError(error: ComposePlayerException) {
-        logMsg { "onPlayerError:$error" }
-        errorTips = error.toString()
+        logMsg { "onPlayerError:${error.stackTraceToString()}" }
+        errorTips = error.desc(context)
       }
     })
   }
