@@ -120,6 +120,7 @@ private class RtspPlayerImpl(
     }
   }
 
+  /** 开始追帧 */
   private fun startChaseLatencyJob() {
     if (chaseLatency > 0) {
       handler.removeCallbacks(_chaseLatencyJob)
@@ -127,6 +128,7 @@ private class RtspPlayerImpl(
     }
   }
 
+  /** 停止追帧 */
   private fun stopChaseLatencyJob() {
     if (chaseLatency > 0) {
       handler.removeCallbacks(_chaseLatencyJob)
