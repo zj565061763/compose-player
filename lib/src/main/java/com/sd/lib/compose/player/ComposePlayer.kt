@@ -304,7 +304,10 @@ internal open class PlayerImpl(
 
   private fun prepare() {
     val dataSource = _dataSource
-    if (dataSource.isEmpty()) return
+    if (dataSource.isBlank()) {
+      _callback?.onPlayerError(ComposePlayerExceptionDataSourceBlank())
+      return
+    }
 
     val player = _exoPlayer ?: playerProvider(context).also { player ->
       _exoPlayer = player
@@ -404,12 +407,28 @@ internal open class PlayerImpl(
   }
 
   override fun onPlayerError(error: PlaybackException) {
-    if (startRetry()) {
+    if (shouldRetry(error) && startRetry()) {
       // 已经发起重试
     } else {
       _requireState = ComposePlayerState.Idle
     }
-    _callback?.onPlayerError(ComposePlayerExceptionPlaybackException(error))
+    _callback?.onPlayerError(wrapPlaybackException(error))
+  }
+
+  /** 是否应该重试 */
+  private fun shouldRetry(error: PlaybackException): Boolean {
+    return when {
+      error.isAuthError() -> false
+      else -> true
+    }
+  }
+
+  /** 包装异常 */
+  private fun wrapPlaybackException(error: PlaybackException): ComposePlayerException {
+    return when {
+      error.isAuthError() -> ComposePlayerExceptionAuth()
+      else -> ComposePlayerExceptionPlaybackException(error)
+    }
   }
 
   private fun setPlayerState(state: ComposePlayerState) {

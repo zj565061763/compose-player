@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="lib_compose_player_ComposePlayerExceptionDataSourceBlank">data source is empty</string>
+    <string name="lib_compose_player_ComposePlayerExceptionDataSource">data source error</string>
+    <string name="lib_compose_player_ComposePlayerExceptionAuth">authorization failed</string>
+</resources>

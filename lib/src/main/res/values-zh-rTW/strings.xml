@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="lib_compose_player_ComposePlayerExceptionDataSourceBlank">數據源為空</string>
+    <string name="lib_compose_player_ComposePlayerExceptionDataSource">數據源異常</string>
+    <string name="lib_compose_player_ComposePlayerExceptionAuth">授權失敗</string>
+</resources>
