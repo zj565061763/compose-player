@@ -63,7 +63,6 @@ private fun Content(
       }
 
       override fun onPlayerBufferStateChanged(state: ComposePlayerBufferState) {
-        logMsg { "onPlayerBufferStateChanged:$state" }
         if (state == ComposePlayerBufferState.Ready) {
           errorTips = ""
         }
