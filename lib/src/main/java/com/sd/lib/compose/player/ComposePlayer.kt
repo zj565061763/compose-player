@@ -39,8 +39,10 @@ fun rememberComposePlayer(
 }
 
 interface ComposePlayer {
+  /** 播放器状态 */
   val playerStateFlow: StateFlow<ComposePlayerState>
 
+  /** 缓冲状态 */
   val bufferStateFlow: StateFlow<ComposePlayerBufferState>
 
   /** 总时长（毫秒），-1表示未知 */
