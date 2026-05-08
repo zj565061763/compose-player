@@ -39,8 +39,10 @@ fun rememberComposePlayer(
 }
 
 interface ComposePlayer {
+  /** 播放器状态 */
   val playerStateFlow: StateFlow<ComposePlayerState>
 
+  /** 缓冲状态 */
   val bufferStateFlow: StateFlow<ComposePlayerBufferState>
 
   /** 播放异常，如果加载成功，会清空此异常 */
