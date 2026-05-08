@@ -43,6 +43,9 @@ interface ComposePlayer {
 
   val bufferStateFlow: StateFlow<ComposePlayerBufferState>
 
+  /** 播放异常，如果加载成功，会清空此异常 */
+  val exceptionFlow: StateFlow<ComposePlayerException?>
+
   /** 总时长（毫秒），-1表示未知 */
   val durationFlow: StateFlow<Long>
 
@@ -183,6 +186,7 @@ internal open class PlayerImpl(
 
   private val _playerStateFlow: MutableStateFlow<ComposePlayerState> = MutableStateFlow(ComposePlayerState.Idle)
   private val _bufferStateFlow: MutableStateFlow<ComposePlayerBufferState> = MutableStateFlow(ComposePlayerBufferState.None)
+  private val _exceptionFlow: MutableStateFlow<ComposePlayerException?> = MutableStateFlow(null)
 
   private val _durationFlow: MutableStateFlow<Long> = MutableStateFlow(-1L)
   private val _isMutedFlow: MutableStateFlow<Boolean> = MutableStateFlow(false)
@@ -201,6 +205,7 @@ internal open class PlayerImpl(
 
   override val playerStateFlow: StateFlow<ComposePlayerState> = _playerStateFlow.asStateFlow()
   override val bufferStateFlow: StateFlow<ComposePlayerBufferState> = _bufferStateFlow.asStateFlow()
+  override val exceptionFlow: StateFlow<ComposePlayerException?> = _exceptionFlow.asStateFlow()
   override val durationFlow: StateFlow<Long> = _durationFlow.asStateFlow()
   override val isMutedFlow: StateFlow<Boolean> = _isMutedFlow.asStateFlow()
   override val speedFlow: StateFlow<Float> = _speedFlow.asStateFlow()
@@ -296,6 +301,7 @@ internal open class PlayerImpl(
     _seekToPositionMs = null
     _callback = null
     _durationFlow.value = -1L
+    setException(null)
     setBufferState(ComposePlayerBufferState.None)
     setPlayerState(ComposePlayerState.Idle)
   }
@@ -313,7 +319,7 @@ internal open class PlayerImpl(
   private fun prepare() {
     val dataSource = _dataSource
     if (dataSource.isBlank()) {
-      _callback?.onPlayerError(ComposePlayerExceptionDataSourceBlank())
+      setException(ComposePlayerExceptionDataSourceBlank())
       return
     }
 
@@ -332,7 +338,7 @@ internal open class PlayerImpl(
         setMedia(player, uri)
         player.prepare()
       }.onFailure { e ->
-        _callback?.onPlayerError(ComposePlayerExceptionDataSource(cause = e))
+        setException(ComposePlayerExceptionDataSource(cause = e))
       }
     }
   }
@@ -351,6 +357,7 @@ internal open class PlayerImpl(
   /** 停止播放 */
   protected fun stopPlayer() {
     _seekToPositionMs = null
+    setException(null)
     _exoPlayer?.also { player ->
       if (player.playbackState != Player.STATE_IDLE) {
         player.stop()
@@ -401,6 +408,7 @@ internal open class PlayerImpl(
       }
       Player.STATE_READY -> {
         stopRetry()
+        setException(null)
         _seekToPositionMs?.also { seekTo(it) }
         updatePlayer()
         _durationFlow.value = getDuration()
@@ -420,7 +428,7 @@ internal open class PlayerImpl(
     } else {
       _requireState = ComposePlayerState.Idle
     }
-    _callback?.onPlayerError(wrapPlaybackException(error))
+    setException(wrapPlaybackException(error))
   }
 
   /** 是否应该重试 */
@@ -449,6 +457,13 @@ internal open class PlayerImpl(
     if (_bufferStateFlow.value == state) return
     _bufferStateFlow.value = state
     _callback?.onPlayerBufferStateChanged(state)
+  }
+
+  private fun setException(error: ComposePlayerException?) {
+    _exceptionFlow.value = error
+    if (error != null) {
+      _callback?.onPlayerError(error)
+    }
   }
 
   private var _retryJob: Runnable? = null
