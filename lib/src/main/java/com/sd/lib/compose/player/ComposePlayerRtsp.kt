@@ -39,6 +39,8 @@ interface ComposePlayerRtsp : ComposePlayer {
       forceUseRtpTcp: Boolean = true,
       /** 是否禁用音频 */
       disableAudio: Boolean = true,
+      /** 是否开启解码回退 */
+      enableDecoderFallback: Boolean = true,
       /** 播放错误，重试间隔（毫秒） */
       retryOnErrorInterval: Long = 5000,
       /** 追帧（毫秒） */
@@ -49,7 +51,13 @@ interface ComposePlayerRtsp : ComposePlayer {
         .setTimeoutMs(Long.MAX_VALUE)
       return RtspPlayerImpl(
         context = context.applicationContext,
-        playerProvider = { ctx -> newLivePlayer(ctx, disableAudio = disableAudio) },
+        playerProvider = { ctx ->
+          newLivePlayer(
+            context = ctx,
+            disableAudio = disableAudio,
+            enableDecoderFallback = enableDecoderFallback,
+          )
+        },
         setMedia = { uri ->
           val mediaSource = rtspSourceFactory.createMediaSource(MediaItem.fromUri(uri))
           setMediaSource(mediaSource)
@@ -162,6 +170,7 @@ private class RtspPlayerImpl(
 private fun newLivePlayer(
   context: Context,
   disableAudio: Boolean,
+  enableDecoderFallback: Boolean,
 ): ExoPlayer {
   val loadController = DefaultLoadControl.Builder()
     .setBufferDurationsMs(32, 30000, 0, 0)
@@ -185,7 +194,7 @@ private fun newLivePlayer(
         eventHandler, eventListener, 0L, out
       )
     }
-  }
+  }.setEnableDecoderFallback(enableDecoderFallback)
 
   return ExoPlayer.Builder(context, renderersFactory)
     .setLoadControl(loadController)

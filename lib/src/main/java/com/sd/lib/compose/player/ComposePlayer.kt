@@ -19,6 +19,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -102,14 +103,21 @@ interface ComposePlayer {
   }
 
   companion object {
+    @SuppressLint("UnsafeOptInUsageError")
     fun create(
       context: Context,
       /** 播放错误，重试间隔（毫秒） */
       retryOnErrorInterval: Long = 5000,
+      /** 是否开启解码回退 */
+      enableDecoderFallback: Boolean = true,
     ): ComposePlayer {
       return PlayerImpl(
         context = context.applicationContext,
-        playerProvider = { ctx -> ExoPlayer.Builder(ctx).build() },
+        playerProvider = { ctx ->
+          val renderersFactory = DefaultRenderersFactory(ctx)
+            .setEnableDecoderFallback(enableDecoderFallback)
+          ExoPlayer.Builder(ctx, renderersFactory).build()
+        },
         setMedia = { uri -> setMediaItem(MediaItem.fromUri(uri)) },
         retryOnErrorInterval = retryOnErrorInterval,
       )
