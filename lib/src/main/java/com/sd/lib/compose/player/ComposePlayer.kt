@@ -18,6 +18,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -50,6 +51,9 @@ interface ComposePlayer {
 
   /** 总时长（毫秒），-1表示未知 */
   val durationFlow: StateFlow<Long>
+
+  /** 视频分辨率（宽，高），null表示未知 */
+  val videoSizeFlow: StateFlow<Pair<Int, Int>?>
 
   /** 是否静音 */
   val isMutedFlow: StateFlow<Boolean>
@@ -191,6 +195,7 @@ internal open class PlayerImpl(
   private val _exceptionFlow: MutableStateFlow<ComposePlayerException?> = MutableStateFlow(null)
 
   private val _durationFlow: MutableStateFlow<Long> = MutableStateFlow(-1L)
+  private val _videoSizeFlow: MutableStateFlow<Pair<Int, Int>?> = MutableStateFlow(null)
   private val _isMutedFlow: MutableStateFlow<Boolean> = MutableStateFlow(false)
   private val _speedFlow: MutableStateFlow<Float> = MutableStateFlow(1.0f)
   private val _isLoopingFlow: MutableStateFlow<Boolean> = MutableStateFlow(false)
@@ -209,6 +214,7 @@ internal open class PlayerImpl(
   override val bufferStateFlow: StateFlow<ComposePlayerBufferState> = _bufferStateFlow.asStateFlow()
   override val exceptionFlow: StateFlow<ComposePlayerException?> = _exceptionFlow.asStateFlow()
   override val durationFlow: StateFlow<Long> = _durationFlow.asStateFlow()
+  override val videoSizeFlow: StateFlow<Pair<Int, Int>?> = _videoSizeFlow.asStateFlow()
   override val isMutedFlow: StateFlow<Boolean> = _isMutedFlow.asStateFlow()
   override val speedFlow: StateFlow<Float> = _speedFlow.asStateFlow()
   override val isLoopingFlow: StateFlow<Boolean> = _isLoopingFlow.asStateFlow()
@@ -303,6 +309,7 @@ internal open class PlayerImpl(
     _seekToPositionMs = null
     _callback = null
     _durationFlow.value = -1L
+    _videoSizeFlow.value = null
     setException(null)
     setBufferState(ComposePlayerBufferState.None)
     setPlayerState(ComposePlayerState.Idle)
@@ -359,6 +366,7 @@ internal open class PlayerImpl(
   /** 停止播放 */
   protected fun stopPlayer() {
     _seekToPositionMs = null
+    _videoSizeFlow.value = null
     setException(null)
     _exoPlayer?.also { player ->
       if (player.playbackState != Player.STATE_IDLE) {
@@ -421,6 +429,14 @@ internal open class PlayerImpl(
         if (_isLoopingFlow.value) play()
       }
       else -> {}
+    }
+  }
+
+  override fun onVideoSizeChanged(videoSize: VideoSize) {
+    _videoSizeFlow.value = if (videoSize.width > 0 && videoSize.height > 0) {
+      Pair(videoSize.width, videoSize.height)
+    } else {
+      null
     }
   }
 
