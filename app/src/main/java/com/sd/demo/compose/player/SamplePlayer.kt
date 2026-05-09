@@ -69,7 +69,8 @@ private fun Content(
 
   val playerState by player.playerStateFlow.collectAsStateWithLifecycle()
   val bufferState by player.bufferStateFlow.collectAsStateWithLifecycle()
-  var errorTips by remember { mutableStateOf("") }
+  val videoSize by player.videoSizeFlow.collectAsStateWithLifecycle()
+  val exception by player.exceptionFlow.collectAsStateWithLifecycle()
 
   LaunchedEffect(player) {
     player.setDataSource(DATA_SOURCE)
@@ -81,14 +82,10 @@ private fun Content(
 
       override fun onPlayerBufferStateChanged(state: ComposePlayerBufferState) {
         logMsg { "onPlayerBufferStateChanged:$state" }
-        if (state == ComposePlayerBufferState.Ready) {
-          errorTips = ""
-        }
       }
 
       override fun onPlayerError(error: ComposePlayerException) {
         logMsg { "onPlayerError:${error.stackTraceToString()}" }
-        errorTips = error.desc(context)
       }
     })
   }
@@ -123,12 +120,19 @@ private fun Content(
         player = player,
       )
 
+      videoSize?.let {
+        Text(
+          modifier = Modifier.align(Alignment.BottomEnd),
+          text = "${it.first}x${it.second}",
+        )
+      }
+
       if (bufferState == ComposePlayerBufferState.Buffering) {
         CircularProgressIndicator()
       }
 
-      if (errorTips.isNotEmpty()) {
-        Text(text = errorTips, color = Color.Red)
+      exception?.let {
+        Text(text = it.desc(context), color = Color.Red)
       }
 
       Column(

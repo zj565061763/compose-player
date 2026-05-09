@@ -13,9 +13,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -24,7 +21,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sd.demo.compose.player.theme.AppTheme
 import com.sd.lib.compose.player.ComposePlayer
-import com.sd.lib.compose.player.ComposePlayerBufferState
 import com.sd.lib.compose.player.ComposePlayerException
 import com.sd.lib.compose.player.ComposePlayerState
 import com.sd.lib.compose.player.ComposePlayerView
@@ -51,9 +47,10 @@ private fun Content(
   val player = rememberComposePlayerRtsp()
   val context = LocalContext.current
 
-  var errorTips by remember { mutableStateOf("") }
   val playerState by player.playerStateFlow.collectAsStateWithLifecycle()
   val bufferState by player.bufferStateFlow.collectAsStateWithLifecycle()
+  val videoSize by player.videoSizeFlow.collectAsStateWithLifecycle()
+  val exception by player.exceptionFlow.collectAsStateWithLifecycle()
 
   LaunchedEffect(player) {
     player.setDataSource(DATA_SOURCE)
@@ -62,15 +59,8 @@ private fun Content(
         logMsg { "onPlayerStateChanged:$state" }
       }
 
-      override fun onPlayerBufferStateChanged(state: ComposePlayerBufferState) {
-        if (state == ComposePlayerBufferState.Ready) {
-          errorTips = ""
-        }
-      }
-
       override fun onPlayerError(error: ComposePlayerException) {
         logMsg { "onPlayerError:${error.stackTraceToString()}" }
-        errorTips = error.desc(context)
       }
     })
   }
@@ -83,7 +73,7 @@ private fun Content(
       modifier = Modifier
         .fillMaxWidth()
         .weight(1f)
-        .background(Color.Red),
+        .background(Color.Gray),
       contentAlignment = Alignment.Center,
     ) {
       ComposePlayerView(
@@ -92,14 +82,19 @@ private fun Content(
           .graphicsLayer { scaleX = -1f },
         player = player,
       )
+      videoSize?.let {
+        Text(
+          modifier = Modifier.align(Alignment.BottomEnd),
+          text = "${it.first}x${it.second}",
+        )
+      }
+      exception?.let {
+        Text(text = it.desc(context), color = Color.Red)
+      }
     }
 
     Text(text = playerState.name)
     Text(text = bufferState.name)
-
-    if (errorTips.isNotEmpty()) {
-      Text(text = errorTips, color = Color.Red)
-    }
 
     Column(
       modifier = Modifier
