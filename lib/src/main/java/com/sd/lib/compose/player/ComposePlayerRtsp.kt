@@ -48,7 +48,6 @@ interface ComposePlayerRtsp : ComposePlayer {
     ): ComposePlayerRtsp {
       val rtspSourceFactory = RtspMediaSource.Factory()
         .setForceUseRtpTcp(forceUseRtpTcp)
-        .setTimeoutMs(Long.MAX_VALUE)
       return RtspPlayerImpl(
         context = context.applicationContext,
         playerProvider = { ctx ->
@@ -108,6 +107,10 @@ private class RtspPlayerImpl(
       startBufferingTimeoutJob()
     } else {
       stopBufferingTimeoutJob()
+    }
+    if (playbackState == Player.STATE_ENDED) {
+      stopPlayer()
+      startPlayer()
     }
   }
 
