@@ -116,7 +116,7 @@ interface ComposePlayer {
     fun create(
       context: Context,
       /** 播放错误，重试间隔（毫秒） */
-      retryOnErrorInterval: Long = 5000,
+      retryOnErrorInterval: Long = 10_000,
       /** 是否开启解码回退 */
       enableDecoderFallback: Boolean = true,
     ): ComposePlayer {
