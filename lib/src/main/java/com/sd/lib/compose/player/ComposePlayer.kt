@@ -369,11 +369,7 @@ internal open class PlayerImpl(
     _seekToPositionMs = null
     _videoSizeFlow.value = null
     setException(null)
-    _exoPlayer?.also { player ->
-      if (player.playbackState != Player.STATE_IDLE) {
-        player.stop()
-      }
-    }
+    stopExoPlayer()
   }
 
   /** 暂停播放 */
@@ -382,6 +378,14 @@ internal open class PlayerImpl(
     _exoPlayer?.also { player ->
       player.pause()
       setPlayerState(ComposePlayerState.Paused)
+    }
+  }
+
+  private fun stopExoPlayer() {
+    _exoPlayer?.also { player ->
+      if (player.playbackState != Player.STATE_IDLE) {
+        player.stop()
+      }
     }
   }
 
@@ -442,6 +446,7 @@ internal open class PlayerImpl(
   }
 
   override fun onPlayerError(error: PlaybackException) {
+    stopExoPlayer()
     if (shouldRetry(error) && startRetry()) {
       // 已经发起重试
     } else {
