@@ -226,6 +226,7 @@ internal open class PlayerImpl(
   override fun setDataSource(uri: String) {
     if (_dataSource != uri) {
       _dataSource = uri
+      stopRetry()
       stopPlayer()
       updatePlayer()
     }
