@@ -116,7 +116,7 @@ private class RtspPlayerImpl(
 
   private fun startBufferingTimeoutJob() {
     handler.removeCallbacks(_bufferingTimeoutJob)
-    handler.postDelayed(_bufferingTimeoutJob, 5000)
+    handler.postDelayed(_bufferingTimeoutJob, 10_000)
   }
 
   private fun stopBufferingTimeoutJob() {
