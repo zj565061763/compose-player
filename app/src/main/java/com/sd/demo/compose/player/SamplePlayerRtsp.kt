@@ -137,7 +137,7 @@ private fun VideoDurationView(
   val duration by player.durationFlow.collectAsStateWithLifecycle()
   LaunchedEffect(player, duration) {
     while (true) {
-      time = "${formatDuration(player.getCurrentPosition())}/${formatDuration(duration)}"
+      time = "${player.getCurrentPosition()}｜${formatDuration(player.getCurrentPosition())}"
       delay(200)
     }
   }
