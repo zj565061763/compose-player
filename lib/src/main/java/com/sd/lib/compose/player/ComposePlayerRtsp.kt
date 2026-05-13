@@ -113,6 +113,10 @@ private class RtspPlayerImpl(
 
   override fun handleStateEnded() {
     stopPlayWatchdogJob()
+    restartPlay()
+  }
+
+  private fun restartPlay() {
     stopPlayer()
     startPlayer()
   }
@@ -149,8 +153,7 @@ private class RtspPlayerImpl(
       } else {
         if (_lastPositionChangeTime > 0 && now - _lastPositionChangeTime > 5_000) {
           _lastPositionChangeTime = now
-          stopPlayer()
-          startPlayer()
+          restartPlay()
           return
         }
       }
