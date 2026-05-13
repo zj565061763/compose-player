@@ -201,6 +201,13 @@ internal open class PlayerImpl(
   private val _isLoopingFlow: MutableStateFlow<Boolean> = MutableStateFlow(false)
 
   private var _requireState: ComposePlayerState? = null
+    set(value) {
+      if (field != value) {
+        field = value
+        onRequireStateChanged(value)
+      }
+    }
+
   private var _dataSource = ""
   private var _seekToPositionMs: Long? = null
   private var _callback: ComposePlayer.Callback? = null
@@ -452,6 +459,8 @@ internal open class PlayerImpl(
     }
     setException(wrapPlaybackException(error))
   }
+
+  protected open fun onRequireStateChanged(state: ComposePlayerState?) = Unit
 
   protected open fun handleStateEnded() {
     _requireState = ComposePlayerState.Ended

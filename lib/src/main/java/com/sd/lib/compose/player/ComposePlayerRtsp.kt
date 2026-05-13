@@ -95,9 +95,9 @@ private class RtspPlayerImpl(
     super.release()
   }
 
-  override fun onIsPlayingChanged(isPlaying: Boolean) {
-    super.onIsPlayingChanged(isPlaying)
-    if (isPlaying) {
+  override fun onRequireStateChanged(state: ComposePlayerState?) {
+    super.onRequireStateChanged(state)
+    if (state == ComposePlayerState.Playing) {
       _lastPosition = -1L
       _lastPositionChangeTime = SystemClock.elapsedRealtime()
       startPlayWatchdogJob()
@@ -126,7 +126,6 @@ private class RtspPlayerImpl(
   private val _playWatchdogJob = object : Runnable {
     override fun run() {
       val player = media3Player ?: return
-      if (!player.isPlaying) return
 
       val currentPosition = player.currentPosition
       val now = SystemClock.elapsedRealtime()
@@ -136,7 +135,7 @@ private class RtspPlayerImpl(
         _lastPosition = currentPosition
         _lastPositionChangeTime = now
       } else {
-        if (_lastPositionChangeTime > 0 && now - _lastPositionChangeTime > 5_000) {
+        if (_lastPositionChangeTime > 0 && now - _lastPositionChangeTime > 10_000) {
           _lastPositionChangeTime = now
           stopPlayer()
           startPlayer()
@@ -145,7 +144,7 @@ private class RtspPlayerImpl(
       }
 
       // 追帧逻辑
-      if (chaseLatency > 0) {
+      if (chaseLatency > 0 && player.isPlaying) {
         val bufferedPosition = player.bufferedPosition
         if (bufferedPosition != C.TIME_UNSET && currentPosition != C.TIME_UNSET) {
           val drift = bufferedPosition - currentPosition
