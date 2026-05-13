@@ -135,7 +135,7 @@ private class RtspPlayerImpl(
         _lastPosition = currentPosition
         _lastPositionChangeTime = now
       } else {
-        if (_lastPositionChangeTime > 0 && now - _lastPositionChangeTime > 10_000) {
+        if (_lastPositionChangeTime > 0 && now - _lastPositionChangeTime > 5_000) {
           _lastPositionChangeTime = now
           stopPlayer()
           startPlayer()
