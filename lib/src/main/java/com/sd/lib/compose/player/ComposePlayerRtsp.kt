@@ -91,7 +91,6 @@ private class RtspPlayerImpl(
 
   override fun seekTo(positionMs: Long) = Unit
   override fun setLooping(looping: Boolean) = Unit
-  override fun handleStateEnded() = Unit
 
   override fun release() {
     stopPlayWatchdogJob()
@@ -110,6 +109,12 @@ private class RtspPlayerImpl(
     if (state != ComposePlayerState.Playing) {
       stopPlayWatchdogJob()
     }
+  }
+
+  override fun handleStateEnded() {
+    stopPlayWatchdogJob()
+    stopPlayer()
+    startPlayer()
   }
 
   /** 开始播放守护任务 */
