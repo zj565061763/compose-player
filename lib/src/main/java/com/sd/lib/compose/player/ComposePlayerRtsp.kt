@@ -17,6 +17,7 @@ import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
 import androidx.media3.exoplayer.video.VideoRendererEventListener
+import java.util.concurrent.atomic.AtomicBoolean
 
 @Composable
 fun rememberComposePlayerRtsp(
@@ -80,6 +81,7 @@ private class RtspPlayerImpl(
   setMedia = setMedia,
   retryOnErrorInterval = retryOnErrorInterval,
 ), ComposePlayerRtsp {
+  private val _startPlayWatchdogJob = AtomicBoolean()
   private var _lastPosition = -1L
   private var _lastPositionChangeTime = 0L
 
@@ -89,37 +91,41 @@ private class RtspPlayerImpl(
 
   override fun seekTo(positionMs: Long) = Unit
   override fun setLooping(looping: Boolean) = Unit
+  override fun handleStateEnded() = Unit
 
   override fun release() {
     stopPlayWatchdogJob()
     super.release()
   }
 
+  override fun onIsPlayingChanged(isPlaying: Boolean) {
+    super.onIsPlayingChanged(isPlaying)
+    if (isPlaying) {
+      startPlayWatchdogJob()
+    }
+  }
+
   override fun onRequireStateChanged(state: ComposePlayerState?) {
     super.onRequireStateChanged(state)
-    if (state == ComposePlayerState.Playing) {
-      _lastPosition = -1L
-      _lastPositionChangeTime = SystemClock.elapsedRealtime()
-      startPlayWatchdogJob()
-    } else {
+    if (state != ComposePlayerState.Playing) {
       stopPlayWatchdogJob()
     }
   }
 
-  override fun handleStateEnded() {
-    stopPlayer()
-    startPlayer()
-  }
-
   /** 开始播放守护任务 */
   private fun startPlayWatchdogJob() {
-    handler.removeCallbacks(_playWatchdogJob)
-    handler.post(_playWatchdogJob)
+    if (_startPlayWatchdogJob.compareAndSet(false, true)) {
+      _lastPosition = -1L
+      _lastPositionChangeTime = SystemClock.elapsedRealtime()
+      handler.removeCallbacks(_playWatchdogJob)
+      handler.post(_playWatchdogJob)
+    }
   }
 
   /** 停止播放守护任务 */
   private fun stopPlayWatchdogJob() {
     handler.removeCallbacks(_playWatchdogJob)
+    _startPlayWatchdogJob.set(false)
   }
 
   /** 播放守护任务：负责进度卡死检查和追帧 */
@@ -131,7 +137,7 @@ private class RtspPlayerImpl(
       val now = SystemClock.elapsedRealtime()
 
       // 检查进度是否在前进
-      if (currentPosition != _lastPosition) {
+      if (_lastPosition != currentPosition) {
         _lastPosition = currentPosition
         _lastPositionChangeTime = now
       } else {
