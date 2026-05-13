@@ -112,11 +112,11 @@ private class RtspPlayerImpl(
   }
 
   override fun handleStateEnded() {
-    stopPlayWatchdogJob()
     restartPlay()
   }
 
   private fun restartPlay() {
+    stopPlayWatchdogJob()
     stopPlayer()
     startPlayer()
   }
@@ -142,33 +142,34 @@ private class RtspPlayerImpl(
   private val _playWatchdogJob = object : Runnable {
     override fun run() {
       if (!_startPlayWatchdogJob.get()) return
-      val player = media3Player ?: return
 
-      val currentPosition = player.currentPosition
-      val now = SystemClock.elapsedRealtime()
+      media3Player?.also { player ->
+        val currentPosition = player.currentPosition
+        val now = SystemClock.elapsedRealtime()
 
-      // 检查进度是否在前进
-      if (_lastPosition != currentPosition) {
-        _lastPosition = currentPosition
-        _lastPositionChangeTime = now
-      } else {
-        if (_lastPositionChangeTime > 0 && now - _lastPositionChangeTime > 5_000) {
+        // 检查进度是否在前进
+        if (_lastPosition != currentPosition) {
+          _lastPosition = currentPosition
           _lastPositionChangeTime = now
-          restartPlay()
-          return
+        } else {
+          if (_lastPositionChangeTime > 0 && now - _lastPositionChangeTime > 5_000) {
+            _lastPositionChangeTime = now
+            restartPlay()
+            return
+          }
         }
-      }
 
-      // 追帧逻辑
-      if (chaseLatency > 0 && player.isPlaying) {
-        val bufferedPosition = player.bufferedPosition
-        if (bufferedPosition != C.TIME_UNSET && currentPosition != C.TIME_UNSET) {
-          val drift = bufferedPosition - currentPosition
-          val userSpeed = speedFlow.value
-          if (drift > chaseLatency) {
-            player.extSetSpeed(userSpeed * 1.2f)
-          } else if (drift < (chaseLatency / 2)) {
-            player.extSetSpeed(userSpeed)
+        // 追帧逻辑
+        if (chaseLatency > 0 && player.isPlaying) {
+          val bufferedPosition = player.bufferedPosition
+          if (bufferedPosition != C.TIME_UNSET && currentPosition != C.TIME_UNSET) {
+            val drift = bufferedPosition - currentPosition
+            val userSpeed = speedFlow.value
+            if (drift > chaseLatency) {
+              player.extSetSpeed(userSpeed * 1.2f)
+            } else if (drift < (chaseLatency / 2)) {
+              player.extSetSpeed(userSpeed)
+            }
           }
         }
       }
