@@ -425,8 +425,8 @@ internal open class PlayerImpl(
         stopRetry()
         setException(null)
         _seekToPositionMs?.also { seekTo(it) }
-        updatePlayer()
         _durationFlow.value = getDuration()
+        updatePlayer()
       }
       Player.STATE_ENDED -> {
         _requireState = ComposePlayerState.Ended
