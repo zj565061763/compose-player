@@ -89,6 +89,7 @@ private class RtspPlayerImpl(
   }
 
   override fun seekTo(positionMs: Long) = Unit
+  override fun setLooping(looping: Boolean) = Unit
 
   override fun release() {
     stopPlayWatchdogJob()
