@@ -8,11 +8,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -26,6 +30,7 @@ import com.sd.lib.compose.player.ComposePlayerState
 import com.sd.lib.compose.player.ComposePlayerView
 import com.sd.lib.compose.player.desc
 import com.sd.lib.compose.player.rememberComposePlayerRtsp
+import kotlinx.coroutines.delay
 
 class SamplePlayerRtsp : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -82,6 +87,12 @@ private fun Content(
           .graphicsLayer { scaleX = -1f },
         player = player,
       )
+      VideoDurationView(
+        modifier = Modifier
+          .align(Alignment.TopEnd)
+          .safeDrawingPadding(),
+        player = player,
+      )
       videoSize?.let {
         Text(
           modifier = Modifier.align(Alignment.BottomEnd),
@@ -113,5 +124,28 @@ private fun Content(
         Text("stop")
       }
     }
+  }
+}
+
+@Composable
+private fun VideoDurationView(
+  modifier: Modifier = Modifier,
+  player: ComposePlayer,
+) {
+  var time by remember { mutableStateOf("") }
+
+  val duration by player.durationFlow.collectAsStateWithLifecycle()
+  LaunchedEffect(player, duration) {
+    while (true) {
+      time = "${formatDuration(player.getCurrentPosition())}/${formatDuration(duration)}"
+      delay(200)
+    }
+  }
+
+  if (time.isNotEmpty()) {
+    Text(
+      modifier = modifier,
+      text = time,
+    )
   }
 }

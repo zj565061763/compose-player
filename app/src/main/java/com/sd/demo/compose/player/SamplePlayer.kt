@@ -292,7 +292,7 @@ private fun VideoProgressView(
 }
 
 /** 格式化时长 */
-private fun formatDuration(ms: Long): String {
+fun formatDuration(ms: Long): String {
   val totalSeconds = (ms / 1000).coerceAtLeast(0)
   val minutes = totalSeconds / 60
   val seconds = totalSeconds % 60
