@@ -133,8 +133,9 @@ private class RtspPlayerImpl(
 
   /** 停止播放守护任务 */
   private fun stopPlayWatchdogJob() {
-    handler.removeCallbacks(_playWatchdogJob)
-    _startPlayWatchdogJob.set(false)
+    if (_startPlayWatchdogJob.compareAndSet(true, false)) {
+      handler.removeCallbacks(_playWatchdogJob)
+    }
   }
 
   /** 播放守护任务：负责进度卡死检查和追帧 */
