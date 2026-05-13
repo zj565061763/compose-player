@@ -3,6 +3,7 @@ package com.sd.lib.compose.player
 import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Handler
+import android.os.SystemClock
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
@@ -80,6 +81,9 @@ private class RtspPlayerImpl(
   setMedia = setMedia,
   retryOnErrorInterval = retryOnErrorInterval,
 ), ComposePlayerRtsp {
+  private var _lastPosition = -1L
+  private var _lastPositionChangeTime = 0L
+
   override fun pause() {
     super.stop()
   }
@@ -87,73 +91,65 @@ private class RtspPlayerImpl(
   override fun seekTo(positionMs: Long) = Unit
 
   override fun release() {
-    stopChaseLatencyJob()
-    stopBufferingTimeoutJob()
+    stopPlayWatchdogJob()
     super.release()
   }
 
   override fun onIsPlayingChanged(isPlaying: Boolean) {
     super.onIsPlayingChanged(isPlaying)
     if (isPlaying) {
-      startChaseLatencyJob()
+      _lastPosition = -1L
+      _lastPositionChangeTime = SystemClock.elapsedRealtime()
+      startPlayWatchdogJob()
     } else {
-      stopChaseLatencyJob()
+      stopPlayWatchdogJob()
     }
   }
 
   override fun onPlaybackStateChanged(playbackState: Int) {
     super.onPlaybackStateChanged(playbackState)
-    if (playbackState == Player.STATE_BUFFERING) {
-      startBufferingTimeoutJob()
-    } else {
-      stopBufferingTimeoutJob()
-    }
     if (playbackState == Player.STATE_ENDED) {
       stopPlayer()
       startPlayer()
     }
   }
 
-  private fun startBufferingTimeoutJob() {
-    handler.removeCallbacks(_bufferingTimeoutJob)
-    handler.postDelayed(_bufferingTimeoutJob, 10_000)
+  /** 开始播放守护任务 */
+  private fun startPlayWatchdogJob() {
+    handler.removeCallbacks(_playWatchdogJob)
+    handler.post(_playWatchdogJob)
   }
 
-  private fun stopBufferingTimeoutJob() {
-    handler.removeCallbacks(_bufferingTimeoutJob)
+  /** 停止播放守护任务 */
+  private fun stopPlayWatchdogJob() {
+    handler.removeCallbacks(_playWatchdogJob)
   }
 
-  /** 缓冲超时任务 */
-  private val _bufferingTimeoutJob = Runnable {
-    if (media3Player?.playbackState == Player.STATE_BUFFERING) {
-      stopPlayer()
-      startPlayer()
-    }
-  }
-
-  /** 开始追帧 */
-  private fun startChaseLatencyJob() {
-    if (chaseLatency > 0) {
-      handler.removeCallbacks(_chaseLatencyJob)
-      handler.post(_chaseLatencyJob)
-    }
-  }
-
-  /** 停止追帧 */
-  private fun stopChaseLatencyJob() {
-    if (chaseLatency > 0) {
-      handler.removeCallbacks(_chaseLatencyJob)
-    }
-  }
-
-  /** 追帧任务 */
-  private val _chaseLatencyJob = object : Runnable {
+  /** 播放守护任务：负责进度卡死检查和追帧 */
+  private val _playWatchdogJob = object : Runnable {
     override fun run() {
-      if (chaseLatency <= 0) return
       val player = media3Player ?: return
-      if (player.isPlaying) {
+      if (!player.isPlaying) return
+
+      val currentPosition = player.currentPosition
+      val now = SystemClock.elapsedRealtime()
+
+      // 检查进度是否在前进
+      if (currentPosition != _lastPosition) {
+        _lastPosition = currentPosition
+        _lastPositionChangeTime = now
+      } else {
+        if (_lastPositionChangeTime > 0 && now - _lastPositionChangeTime > 10_000) {
+          _lastPositionChangeTime = now
+          stopPlayer()
+          startPlayer()
+          return
+        }
+      }
+
+      // 追帧逻辑
+      if (chaseLatency > 0) {
         val bufferedPosition = player.bufferedPosition
-        val currentPosition = player.currentPosition
         if (bufferedPosition != C.TIME_UNSET && currentPosition != C.TIME_UNSET) {
           val drift = bufferedPosition - currentPosition
           val userSpeed = speedFlow.value
@@ -163,8 +159,10 @@ private class RtspPlayerImpl(
             player.extSetSpeed(userSpeed)
           }
         }
-        handler.postDelayed(this, chaseLatency / 2)
       }
+
+      val interval = if (chaseLatency > 0) (chaseLatency / 2).coerceAtLeast(100) else 1000L
+      handler.postDelayed(this, interval)
     }
   }
 }
