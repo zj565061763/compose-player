@@ -10,7 +10,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -107,12 +106,9 @@ private class RtspPlayerImpl(
     }
   }
 
-  override fun onPlaybackStateChanged(playbackState: Int) {
-    super.onPlaybackStateChanged(playbackState)
-    if (playbackState == Player.STATE_ENDED) {
-      stopPlayer()
-      startPlayer()
-    }
+  override fun handleStateEnded() {
+    stopPlayer()
+    startPlayer()
   }
 
   /** 开始播放守护任务 */

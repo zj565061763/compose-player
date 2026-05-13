@@ -429,9 +429,7 @@ internal open class PlayerImpl(
         updatePlayer()
       }
       Player.STATE_ENDED -> {
-        _requireState = ComposePlayerState.Ended
-        setPlayerState(ComposePlayerState.Ended)
-        if (_isLoopingFlow.value) play()
+        handleStateEnded()
       }
       else -> {}
     }
@@ -453,6 +451,12 @@ internal open class PlayerImpl(
       _requireState = ComposePlayerState.Idle
     }
     setException(wrapPlaybackException(error))
+  }
+
+  protected open fun handleStateEnded() {
+    _requireState = ComposePlayerState.Ended
+    setPlayerState(ComposePlayerState.Ended)
+    if (_isLoopingFlow.value) play()
   }
 
   /** 是否应该重试 */
