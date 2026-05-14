@@ -171,7 +171,7 @@ suspend fun ComposePlayer.awaitBufferReady() {
   bufferStateFlow.first { it == ComposePlayerBufferState.Ready }
 }
 
-/** 挂起等待获取总时长 */
+/** 挂起等待获取总时长[ComposePlayer.durationFlow] */
 suspend fun ComposePlayer.awaitDuration(): Long {
   return durationFlow.filterNotNull().first()
 }
