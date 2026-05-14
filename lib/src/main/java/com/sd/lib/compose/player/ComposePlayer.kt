@@ -233,7 +233,6 @@ internal open class PlayerImpl(
   override fun setDataSource(uri: String) {
     if (_dataSource != uri) {
       _dataSource = uri
-      stopRetry()
       stopPlayer()
       updatePlayer()
     }
@@ -373,6 +372,7 @@ internal open class PlayerImpl(
 
   /** 停止播放 */
   protected fun stopPlayer() {
+    stopRetry()
     _seekToPositionMs = null
     _videoSizeFlow.value = null
     setException(null)
