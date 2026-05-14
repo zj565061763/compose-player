@@ -18,6 +18,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -434,13 +435,27 @@ internal open class PlayerImpl(
         stopRetry()
         setException(null)
         _seekToPositionMs?.also { seekTo(it) }
-        _durationFlow.value = getDuration()
+        updateDurationFlow()
         updatePlayer()
       }
       Player.STATE_ENDED -> {
         handleStateEnded()
       }
       else -> {}
+    }
+  }
+
+  override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+    updateDurationFlow()
+  }
+
+  override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+    updateDurationFlow()
+  }
+
+  private fun updateDurationFlow() {
+    getDuration()?.also { duration ->
+      _durationFlow.value = duration
     }
   }
 
