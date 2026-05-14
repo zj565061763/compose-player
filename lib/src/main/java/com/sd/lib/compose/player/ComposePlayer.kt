@@ -25,6 +25,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 
 @Composable
@@ -49,10 +50,10 @@ interface ComposePlayer {
   /** 播放异常，如果加载成功，会清空此异常 */
   val exceptionFlow: StateFlow<ComposePlayerException?>
 
-  /** 总时长（毫秒），-1表示未知 */
-  val durationFlow: StateFlow<Long>
+  /** 总时长（毫秒），null表示未知，非null时一定大于0 */
+  val durationFlow: StateFlow<Long?>
 
-  /** 视频分辨率（宽，高），null表示未知 */
+  /** 视频分辨率（宽，高），null表示未知 ，非null时宽高一定大于0*/
   val videoSizeFlow: StateFlow<Pair<Int, Int>?>
 
   /** 是否静音 */
@@ -85,8 +86,8 @@ interface ComposePlayer {
   /** 当前播放进度时间点（毫秒） */
   fun getCurrentPosition(): Long
 
-  /** 总时长（毫秒） */
-  fun getDuration(): Long
+  /** 总时长（毫秒），null表示未知，非null时一定大于0 */
+  fun getDuration(): Long?
 
   /** 设置静音 */
   fun setMute(mute: Boolean)
@@ -170,10 +171,8 @@ suspend fun ComposePlayer.awaitBufferReady() {
 }
 
 /** 挂起等待获取总时长 */
-suspend fun ComposePlayer.awaitDuration(
-  predicate: suspend (Long) -> Boolean = { it > 0 },
-): Long {
-  return durationFlow.first(predicate)
+suspend fun ComposePlayer.awaitDuration(): Long {
+  return durationFlow.filterNotNull().first()
 }
 
 /** 移动进度 */
@@ -195,7 +194,7 @@ internal open class PlayerImpl(
   private val _exceptionFlow: MutableStateFlow<ComposePlayerException?> = MutableStateFlow(null)
 
   // 媒体属性
-  private val _durationFlow: MutableStateFlow<Long> = MutableStateFlow(-1L)
+  private val _durationFlow: MutableStateFlow<Long?> = MutableStateFlow(null)
   private val _videoSizeFlow: MutableStateFlow<Pair<Int, Int>?> = MutableStateFlow(null)
 
   // 控制属性
@@ -223,7 +222,7 @@ internal open class PlayerImpl(
   override val playerStateFlow: StateFlow<ComposePlayerState> = _playerStateFlow.asStateFlow()
   override val bufferStateFlow: StateFlow<ComposePlayerBufferState> = _bufferStateFlow.asStateFlow()
   override val exceptionFlow: StateFlow<ComposePlayerException?> = _exceptionFlow.asStateFlow()
-  override val durationFlow: StateFlow<Long> = _durationFlow.asStateFlow()
+  override val durationFlow: StateFlow<Long?> = _durationFlow.asStateFlow()
   override val videoSizeFlow: StateFlow<Pair<Int, Int>?> = _videoSizeFlow.asStateFlow()
   override val isMutedFlow: StateFlow<Boolean> = _isMutedFlow.asStateFlow()
   override val speedFlow: StateFlow<Float> = _speedFlow.asStateFlow()
@@ -267,7 +266,7 @@ internal open class PlayerImpl(
     }
 
     val duration = getDuration()
-    if (duration <= 0) {
+    if (duration == null) {
       _seekToPositionMs = positionMs
       return
     }
@@ -281,9 +280,9 @@ internal open class PlayerImpl(
     return (_exoPlayer?.currentPosition ?: 0L).coerceAtLeast(0L)
   }
 
-  override fun getDuration(): Long {
-    val duration = _exoPlayer?.duration ?: -1L
-    return if (duration == C.TIME_UNSET) -1L else duration
+  override fun getDuration(): Long? {
+    val duration = _exoPlayer?.duration ?: return null
+    return if (duration == C.TIME_UNSET) null else duration.takeIf { it > 0 }
   }
 
   override fun setMute(mute: Boolean) {
@@ -318,7 +317,7 @@ internal open class PlayerImpl(
     _dataSource = ""
     _seekToPositionMs = null
     _callback = null
-    _durationFlow.value = -1L
+    _durationFlow.value = null
     _videoSizeFlow.value = null
     setException(null)
     setBufferState(ComposePlayerBufferState.None)
@@ -428,7 +427,7 @@ internal open class PlayerImpl(
     when (playbackState) {
       Player.STATE_IDLE -> {
         setPlayerState(ComposePlayerState.Idle)
-        _durationFlow.value = -1L
+        _durationFlow.value = null
         _videoSizeFlow.value = null
       }
       Player.STATE_READY -> {
