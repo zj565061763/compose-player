@@ -68,6 +68,7 @@ private fun Content(
         logMsg { "onPlayerError:${error.stackTraceToString()}" }
       }
     })
+    player.play()
   }
 
   Column(
