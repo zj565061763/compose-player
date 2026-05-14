@@ -374,7 +374,6 @@ internal open class PlayerImpl(
   protected fun stopPlayer() {
     stopRetry()
     _seekToPositionMs = null
-    _videoSizeFlow.value = null
     setException(null)
     stopExoPlayer()
   }
@@ -427,6 +426,7 @@ internal open class PlayerImpl(
       Player.STATE_IDLE -> {
         setPlayerState(ComposePlayerState.Idle)
         _durationFlow.value = -1L
+        _videoSizeFlow.value = null
       }
       Player.STATE_READY -> {
         stopRetry()
