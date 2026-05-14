@@ -194,8 +194,11 @@ internal open class PlayerImpl(
   private val _bufferStateFlow: MutableStateFlow<ComposePlayerBufferState> = MutableStateFlow(ComposePlayerBufferState.None)
   private val _exceptionFlow: MutableStateFlow<ComposePlayerException?> = MutableStateFlow(null)
 
+  // 媒体属性
   private val _durationFlow: MutableStateFlow<Long> = MutableStateFlow(-1L)
   private val _videoSizeFlow: MutableStateFlow<Pair<Int, Int>?> = MutableStateFlow(null)
+
+  // 控制属性
   private val _isMutedFlow: MutableStateFlow<Boolean> = MutableStateFlow(false)
   private val _speedFlow: MutableStateFlow<Float> = MutableStateFlow(1.0f)
   private val _isLoopingFlow: MutableStateFlow<Boolean> = MutableStateFlow(false)
