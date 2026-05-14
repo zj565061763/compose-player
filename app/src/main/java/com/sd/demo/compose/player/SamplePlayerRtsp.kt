@@ -132,9 +132,11 @@ private fun VideoDurationView(
   modifier: Modifier = Modifier,
   player: ComposePlayer,
 ) {
+  val durationState = player.durationFlow.collectAsStateWithLifecycle()
+  val duration = durationState.value ?: return
+
   var time by remember { mutableStateOf("") }
 
-  val duration by player.durationFlow.collectAsStateWithLifecycle()
   LaunchedEffect(player, duration) {
     while (true) {
       time = "${player.getCurrentPosition()}｜${formatDuration(player.getCurrentPosition())}"

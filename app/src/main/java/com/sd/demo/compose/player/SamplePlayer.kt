@@ -224,9 +224,11 @@ private fun VideoDurationView(
   modifier: Modifier = Modifier,
   player: ComposePlayer,
 ) {
+  val durationState = player.durationFlow.collectAsStateWithLifecycle()
+  val duration = durationState.value ?: return
+
   var time by remember { mutableStateOf("") }
 
-  val duration by player.durationFlow.collectAsStateWithLifecycle()
   LaunchedEffect(player, duration) {
     while (true) {
       time = "${formatDuration(player.getCurrentPosition())}/${formatDuration(duration)}"
@@ -253,8 +255,10 @@ private fun VideoProgressView(
   val durationState = player.durationFlow.collectAsStateWithLifecycle()
   val duration = if (LocalInspectionMode.current) 10000 else durationState.value
 
-  // 如果未获取到时长，不显示控件
-  if (duration <= 0) return
+  if (duration == null) {
+    // 如果未获取到，不显示控件
+    return
+  }
 
   val sliderState = remember(duration) {
     SliderState(
