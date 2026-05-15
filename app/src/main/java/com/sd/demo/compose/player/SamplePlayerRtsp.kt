@@ -75,7 +75,7 @@ private fun Content(
       }
 
       override fun onStuckPosition() {
-        logMsg { "onStuckRenderedFrame" }
+        logMsg { "onStuckPosition" }
       }
     })
     player.play()
