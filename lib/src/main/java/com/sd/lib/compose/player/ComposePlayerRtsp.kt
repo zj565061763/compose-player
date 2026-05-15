@@ -156,6 +156,14 @@ private class RtspPlayerImpl(
 
   /** 开始播放守护任务 */
   private fun startPlayWatchdogJob() {
+    if (stuckPositionInterval <= 0
+      && stuckRenderedFrameInterval <= 0
+      && chaseLatency <= 0
+    ) {
+      // 未配置参数，不需要守护任务
+      return
+    }
+
     if (_startPlayWatchdogJob.compareAndSet(false, true)) {
       _lastPosition = -1L
       _lastPositionChangeTime = SystemClock.elapsedRealtime()
