@@ -154,12 +154,12 @@ private class RtspPlayerImpl(
     override fun run() {
       if (!_startPlayWatchdogJob.get()) return
 
-      media3Player?.also { player ->
+      exoPlayer?.also { player ->
         val currentPosition = player.currentPosition
         val now = SystemClock.elapsedRealtime()
 
         // 检查渲染帧数是否在增加
-        (player as? ExoPlayer)?.videoDecoderCounters?.let { counters ->
+        player.videoDecoderCounters?.let { counters ->
           val currentRenderedFrameCount = counters.renderedOutputBufferCount
           if (_lastRenderedFrameCount != currentRenderedFrameCount) {
             _lastRenderedFrameCount = currentRenderedFrameCount

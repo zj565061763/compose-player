@@ -217,7 +217,7 @@ internal open class PlayerImpl(
 
   protected val handler = Handler(Looper.getMainLooper())
 
-  val media3Player: Player?
+  val exoPlayer: ExoPlayer?
     get() = _exoPlayer
 
   override val playerStateFlow: StateFlow<ComposePlayerState> = _playerStateFlow.asStateFlow()

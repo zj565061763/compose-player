@@ -27,8 +27,8 @@ fun ComposePlayerView(
 ) {
   require(player is PlayerImpl)
 
-  val media3Player = player.media3Player
-  val presentationState = rememberPresentationState(media3Player)
+  val exoPlayer = player.exoPlayer
+  val presentationState = rememberPresentationState(exoPlayer)
 
   key(rebindKeyProvider()) {
     PlayerSurface(
@@ -36,7 +36,7 @@ fun ComposePlayerView(
         contentScale = contentScale,
         sourceSizeDp = presentationState.videoSizeDp,
       ),
-      player = media3Player,
+      player = exoPlayer,
       surfaceType = when (surfaceType) {
         ComposePlayerViewSurfaceType.SurfaceView -> SURFACE_TYPE_SURFACE_VIEW
         ComposePlayerViewSurfaceType.TextureView -> SURFACE_TYPE_TEXTURE_VIEW
