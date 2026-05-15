@@ -62,7 +62,7 @@ interface ComposePlayerRtsp : ComposePlayer {
       stuckRenderedFrameInterval: Long = 5_000,
       /** 播放错误，重试间隔（毫秒） */
       retryOnErrorInterval: Long = 10_000,
-      /** 追帧（毫秒） */
+      /** 追帧（毫秒），大于0生效 */
       chaseLatency: Long = 200,
     ): ComposePlayerRtsp {
       val rtspSourceFactory = RtspMediaSource.Factory()
