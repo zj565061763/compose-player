@@ -199,7 +199,6 @@ private class RtspPlayerImpl(
             _lastPositionChangeTime = now
           } else {
             if (_lastPositionChangeTime > 0 && now - _lastPositionChangeTime > stuckPositionInterval) {
-              _lastPositionChangeTime = now
               _eventCallback?.onStuckPosition()
               restartPlay()
               return
@@ -216,7 +215,6 @@ private class RtspPlayerImpl(
               _lastFrameRenderedTime = now
             } else {
               if (_lastFrameRenderedTime > 0 && now - _lastFrameRenderedTime > stuckRenderedFrameInterval) {
-                _lastFrameRenderedTime = now
                 _eventCallback?.onStuckRenderedFrame()
                 restartPlay()
                 return
