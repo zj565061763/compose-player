@@ -56,8 +56,10 @@ interface ComposePlayerRtsp : ComposePlayer {
       disableAudio: Boolean = true,
       /** 是否开启解码回退 */
       enableDecoderFallback: Boolean = true,
-      /** 是否检测渲染帧数 */
-      checkRenderedFrameCount: Boolean = true,
+      /** 进度卡住检测间隔（毫秒），大于0生效 */
+      stuckPositionInterval: Long = 5_000,
+      /** 渲染帧卡住检测间隔（毫秒），大于0生效 */
+      stuckRenderedFrameInterval: Long = 5_000,
       /** 播放错误，重试间隔（毫秒） */
       retryOnErrorInterval: Long = 10_000,
       /** 追帧（毫秒） */
@@ -79,7 +81,8 @@ interface ComposePlayerRtsp : ComposePlayer {
           setMediaSource(mediaSource)
         },
         retryOnErrorInterval = retryOnErrorInterval,
-        checkRenderedFrameCount = checkRenderedFrameCount,
+        stuckPositionInterval = stuckPositionInterval,
+        stuckRenderedFrameInterval = stuckRenderedFrameInterval,
         chaseLatency = chaseLatency,
       )
     }
@@ -92,7 +95,8 @@ private class RtspPlayerImpl(
   playerProvider: (Context) -> ExoPlayer,
   setMedia: ExoPlayer.(String) -> Unit,
   retryOnErrorInterval: Long,
-  private val checkRenderedFrameCount: Boolean,
+  private val stuckPositionInterval: Long,
+  private val stuckRenderedFrameInterval: Long,
   private val chaseLatency: Long,
 ) : PlayerImpl(
   context = context,
@@ -178,30 +182,32 @@ private class RtspPlayerImpl(
 
       exoPlayer?.also { player ->
         val now = SystemClock.elapsedRealtime()
+        val currentPosition = player.currentPosition
 
         // 检查进度是否在前进
-        val currentPosition = player.currentPosition
-        if (_lastPosition != currentPosition) {
-          _lastPosition = currentPosition
-          _lastPositionChangeTime = now
-        } else {
-          if (_lastPositionChangeTime > 0 && now - _lastPositionChangeTime > 5_000) {
+        if (stuckPositionInterval > 0) {
+          if (_lastPosition != currentPosition) {
+            _lastPosition = currentPosition
             _lastPositionChangeTime = now
-            _eventCallback?.onStuckPosition()
-            restartPlay()
-            return
+          } else {
+            if (_lastPositionChangeTime > 0 && now - _lastPositionChangeTime > stuckPositionInterval) {
+              _lastPositionChangeTime = now
+              _eventCallback?.onStuckPosition()
+              restartPlay()
+              return
+            }
           }
         }
 
         // 检查渲染帧数是否在增加
-        if (checkRenderedFrameCount) {
+        if (stuckRenderedFrameInterval > 0) {
           player.videoDecoderCounters?.also { counters ->
             val currentRenderedFrameCount = counters.renderedOutputBufferCount
             if (_lastRenderedFrameCount != currentRenderedFrameCount) {
               _lastRenderedFrameCount = currentRenderedFrameCount
               _lastFrameRenderedTime = now
             } else {
-              if (_lastFrameRenderedTime > 0 && now - _lastFrameRenderedTime > 5_000) {
+              if (_lastFrameRenderedTime > 0 && now - _lastFrameRenderedTime > stuckRenderedFrameInterval) {
                 _lastFrameRenderedTime = now
                 _eventCallback?.onStuckRenderedFrame()
                 restartPlay()
