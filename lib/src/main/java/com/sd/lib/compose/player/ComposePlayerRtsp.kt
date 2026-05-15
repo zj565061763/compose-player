@@ -164,10 +164,12 @@ private class RtspPlayerImpl(
           if (_lastRenderedFrameCount != currentRenderedFrameCount) {
             _lastRenderedFrameCount = currentRenderedFrameCount
             _lastFrameRenderedTime = now
-          } else if (player.isPlaying && now - _lastFrameRenderedTime > 5_000) {
-            _lastFrameRenderedTime = now
-            restartPlay()
-            return
+          } else {
+            if (player.isPlaying && now - _lastFrameRenderedTime > 5_000) {
+              _lastFrameRenderedTime = now
+              restartPlay()
+              return
+            }
           }
         }
 
