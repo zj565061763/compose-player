@@ -212,7 +212,7 @@ private class RtspPlayerImpl(
         }
 
         // 追帧逻辑
-        if (chaseLatency > 0 && player.isPlaying) {
+        if (chaseLatency > 0) {
           val bufferedPosition = player.bufferedPosition
           if (bufferedPosition != C.TIME_UNSET && currentPosition != C.TIME_UNSET) {
             val drift = bufferedPosition - currentPosition
