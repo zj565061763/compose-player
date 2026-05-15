@@ -159,7 +159,7 @@ private class RtspPlayerImpl(
         val now = SystemClock.elapsedRealtime()
 
         // 检查渲染帧数是否在增加
-        player.videoDecoderCounters?.let { counters ->
+        player.videoDecoderCounters?.also { counters ->
           val currentRenderedFrameCount = counters.renderedOutputBufferCount
           if (_lastRenderedFrameCount != currentRenderedFrameCount) {
             _lastRenderedFrameCount = currentRenderedFrameCount
