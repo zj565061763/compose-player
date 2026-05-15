@@ -149,7 +149,7 @@ private class RtspPlayerImpl(
     }
   }
 
-  /** 播放守护任务：负责进度卡死检查和追帧 */
+  /** 播放守护任务：负责卡死检查和追帧 */
   private val _playWatchdogJob = object : Runnable {
     override fun run() {
       if (!_startPlayWatchdogJob.get()) return
