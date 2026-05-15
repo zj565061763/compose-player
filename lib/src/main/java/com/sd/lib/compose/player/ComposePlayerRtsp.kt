@@ -34,6 +34,18 @@ fun rememberComposePlayerRtsp(
 }
 
 interface ComposePlayerRtsp : ComposePlayer {
+
+  /** 回调对象 */
+  fun setEventCallback(callback: EventCallback)
+
+  abstract class EventCallback {
+    /** 渲染帧卡住 */
+    open fun onStuckRenderedFrame() = Unit
+
+    /** 进度卡住 */
+    open fun onStuckPosition() = Unit
+  }
+
   companion object {
     @SuppressLint("UnsafeOptInUsageError")
     fun create(
@@ -95,6 +107,12 @@ private class RtspPlayerImpl(
 
   private var _lastRenderedFrameCount = -1
   private var _lastFrameRenderedTime = 0L
+
+  private var _eventCallback: ComposePlayerRtsp.EventCallback? = null
+
+  override fun setEventCallback(callback: ComposePlayerRtsp.EventCallback) {
+    _eventCallback = callback
+  }
 
   override fun pause() {
     super.stop()
@@ -169,6 +187,7 @@ private class RtspPlayerImpl(
         } else {
           if (_lastPositionChangeTime > 0 && now - _lastPositionChangeTime > 5_000) {
             _lastPositionChangeTime = now
+            _eventCallback?.onStuckPosition()
             restartPlay()
             return
           }
@@ -184,6 +203,7 @@ private class RtspPlayerImpl(
             } else {
               if (player.isPlaying && now - _lastFrameRenderedTime > 5_000) {
                 _lastFrameRenderedTime = now
+                _eventCallback?.onStuckRenderedFrame()
                 restartPlay()
                 return
               }

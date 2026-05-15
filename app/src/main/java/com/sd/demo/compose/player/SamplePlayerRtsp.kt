@@ -26,6 +26,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sd.demo.compose.player.theme.AppTheme
 import com.sd.lib.compose.player.ComposePlayer
 import com.sd.lib.compose.player.ComposePlayerException
+import com.sd.lib.compose.player.ComposePlayerRtsp
 import com.sd.lib.compose.player.ComposePlayerState
 import com.sd.lib.compose.player.ComposePlayerView
 import com.sd.lib.compose.player.desc
@@ -66,6 +67,15 @@ private fun Content(
 
       override fun onPlayerError(error: ComposePlayerException) {
         logMsg { "onPlayerError:${error.stackTraceToString()}" }
+      }
+    })
+    player.setEventCallback(object : ComposePlayerRtsp.EventCallback() {
+      override fun onStuckRenderedFrame() {
+        logMsg { "onStuckRenderedFrame" }
+      }
+
+      override fun onStuckPosition() {
+        logMsg { "onStuckRenderedFrame" }
       }
     })
     player.play()
