@@ -4,12 +4,14 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Handler
 import android.os.SystemClock
+import androidx.annotation.OptIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -69,6 +71,7 @@ interface ComposePlayerRtsp : ComposePlayer {
   }
 }
 
+@OptIn(UnstableApi::class)
 private class RtspPlayerImpl(
   context: Context,
   playerProvider: (Context) -> ExoPlayer,
@@ -82,8 +85,12 @@ private class RtspPlayerImpl(
   retryOnErrorInterval = retryOnErrorInterval,
 ), ComposePlayerRtsp {
   private val _startPlayWatchdogJob = AtomicBoolean()
+
   private var _lastPosition = -1L
   private var _lastPositionChangeTime = 0L
+
+  private var _lastRenderedFrameCount = -1
+  private var _lastFrameRenderedTime = 0L
 
   override fun pause() {
     super.stop()
@@ -126,6 +133,10 @@ private class RtspPlayerImpl(
     if (_startPlayWatchdogJob.compareAndSet(false, true)) {
       _lastPosition = -1L
       _lastPositionChangeTime = SystemClock.elapsedRealtime()
+
+      _lastRenderedFrameCount = -1
+      _lastFrameRenderedTime = SystemClock.elapsedRealtime()
+
       handler.removeCallbacks(_playWatchdogJob)
       handler.post(_playWatchdogJob)
     }
@@ -146,6 +157,19 @@ private class RtspPlayerImpl(
       media3Player?.also { player ->
         val currentPosition = player.currentPosition
         val now = SystemClock.elapsedRealtime()
+
+        // 检查渲染帧数是否在增加
+        (player as? ExoPlayer)?.videoDecoderCounters?.let { counters ->
+          val currentRenderedFrameCount = counters.renderedOutputBufferCount
+          if (_lastRenderedFrameCount != currentRenderedFrameCount) {
+            _lastRenderedFrameCount = currentRenderedFrameCount
+            _lastFrameRenderedTime = now
+          } else if (player.isPlaying && now - _lastFrameRenderedTime > 5_000) {
+            _lastFrameRenderedTime = now
+            restartPlay()
+            return
+          }
+        }
 
         // 检查进度是否在前进
         if (_lastPosition != currentPosition) {
