@@ -39,11 +39,11 @@ interface ComposePlayerRtsp : ComposePlayer {
   fun setEventCallback(callback: EventCallback)
 
   abstract class EventCallback {
-    /** 渲染帧卡住 */
-    open fun onStuckRenderedFrame() = Unit
-
     /** 进度卡住 */
     open fun onStuckPosition() = Unit
+
+    /** 渲染帧卡住 */
+    open fun onStuckRenderedFrame() = Unit
   }
 
   companion object {

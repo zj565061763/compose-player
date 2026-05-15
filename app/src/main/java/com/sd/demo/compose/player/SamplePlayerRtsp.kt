@@ -70,12 +70,12 @@ private fun Content(
       }
     })
     player.setEventCallback(object : ComposePlayerRtsp.EventCallback() {
-      override fun onStuckRenderedFrame() {
-        logMsg { "onStuckRenderedFrame" }
-      }
-
       override fun onStuckPosition() {
         logMsg { "onStuckPosition" }
+      }
+
+      override fun onStuckRenderedFrame() {
+        logMsg { "onStuckRenderedFrame" }
       }
     })
     player.play()
