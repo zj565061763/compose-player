@@ -155,8 +155,20 @@ private class RtspPlayerImpl(
       if (!_startPlayWatchdogJob.get()) return
 
       exoPlayer?.also { player ->
-        val currentPosition = player.currentPosition
         val now = SystemClock.elapsedRealtime()
+
+        // 检查进度是否在前进
+        val currentPosition = player.currentPosition
+        if (_lastPosition != currentPosition) {
+          _lastPosition = currentPosition
+          _lastPositionChangeTime = now
+        } else {
+          if (_lastPositionChangeTime > 0 && now - _lastPositionChangeTime > 5_000) {
+            _lastPositionChangeTime = now
+            restartPlay()
+            return
+          }
+        }
 
         // 检查渲染帧数是否在增加
         player.videoDecoderCounters?.also { counters ->
@@ -170,18 +182,6 @@ private class RtspPlayerImpl(
               restartPlay()
               return
             }
-          }
-        }
-
-        // 检查进度是否在前进
-        if (_lastPosition != currentPosition) {
-          _lastPosition = currentPosition
-          _lastPositionChangeTime = now
-        } else {
-          if (_lastPositionChangeTime > 0 && now - _lastPositionChangeTime > 5_000) {
-            _lastPositionChangeTime = now
-            restartPlay()
-            return
           }
         }
 
