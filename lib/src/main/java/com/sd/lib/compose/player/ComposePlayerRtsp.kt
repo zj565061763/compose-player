@@ -201,7 +201,7 @@ private class RtspPlayerImpl(
               _lastRenderedFrameCount = currentRenderedFrameCount
               _lastFrameRenderedTime = now
             } else {
-              if (now - _lastFrameRenderedTime > 5_000) {
+              if (_lastFrameRenderedTime > 0 && now - _lastFrameRenderedTime > 5_000) {
                 _lastFrameRenderedTime = now
                 _eventCallback?.onStuckRenderedFrame()
                 restartPlay()
