@@ -211,7 +211,7 @@ internal open class PlayerImpl(
       }
     }
 
-  private var _dataSource = ""
+  private var _dataSource: String? = null
   private var _seekToPositionMs: Long? = null
   private var _callback: ComposePlayer.Callback? = null
 
@@ -234,8 +234,9 @@ internal open class PlayerImpl(
   }
 
   override fun setDataSource(uri: String) {
-    if (_dataSource != uri) {
-      _dataSource = uri
+    val safeUri = uri.trim()
+    if (_dataSource != safeUri) {
+      _dataSource = safeUri
       stopPlayer()
       updatePlayer()
     }
@@ -315,7 +316,7 @@ internal open class PlayerImpl(
       it.release()
     }
 
-    _dataSource = ""
+    _dataSource = null
     _seekToPositionMs = null
     _callback = null
     _durationFlow.value = null
@@ -336,7 +337,7 @@ internal open class PlayerImpl(
   }
 
   private fun prepare() {
-    val dataSource = _dataSource
+    val dataSource = _dataSource ?: return
     if (dataSource.isBlank()) {
       setException(ComposePlayerExceptionDataSourceBlank())
       return
