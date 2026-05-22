@@ -312,7 +312,6 @@ internal open class PlayerImpl(
     _requireState = null
     _exoPlayer?.also {
       _exoPlayer = null
-      it.removeListener(this@PlayerImpl)
       it.release()
     }
 
@@ -379,7 +378,11 @@ internal open class PlayerImpl(
     stopRetry()
     _seekToPositionMs = null
     setException(null)
-    stopExoPlayer()
+    _exoPlayer?.also { player ->
+      if (player.playbackState != Player.STATE_IDLE) {
+        player.stop()
+      }
+    }
   }
 
   /** 暂停播放 */
@@ -388,14 +391,6 @@ internal open class PlayerImpl(
     _exoPlayer?.also { player ->
       player.pause()
       setPlayerState(ComposePlayerState.Paused)
-    }
-  }
-
-  private fun stopExoPlayer() {
-    _exoPlayer?.also { player ->
-      if (player.playbackState != Player.STATE_IDLE) {
-        player.stop()
-      }
     }
   }
 
@@ -469,7 +464,6 @@ internal open class PlayerImpl(
   }
 
   override fun onPlayerError(error: PlaybackException) {
-    stopExoPlayer()
     if (shouldRetry(error) && startRetry()) {
       // 已经发起重试
     } else {
