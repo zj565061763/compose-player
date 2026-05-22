@@ -307,11 +307,12 @@ internal open class PlayerImpl(
 
   @CallSuper
   override fun release() {
-    stopRetry()
+    stop()
 
     _requireState = null
     _exoPlayer?.also {
       _exoPlayer = null
+      it.clearVideoSurface()
       it.release()
     }
 
