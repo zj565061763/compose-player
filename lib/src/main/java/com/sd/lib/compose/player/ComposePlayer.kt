@@ -318,7 +318,6 @@ internal open class PlayerImpl(
 
     _dataSource = null
     _seekToPositionMs = null
-    _callback = null
     _durationFlow.value = null
     _videoSizeFlow.value = null
     setException(null)
