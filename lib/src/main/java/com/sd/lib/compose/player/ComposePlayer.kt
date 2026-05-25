@@ -57,6 +57,9 @@ interface ComposePlayer {
   /** 视频分辨率（宽，高），null表示未知 ，非null时宽高一定大于0*/
   val videoSizeFlow: StateFlow<Pair<Int, Int>?>
 
+  /** 是否已经渲染了首帧 */
+  val isRenderedFirstFrameFlow: StateFlow<Boolean>
+
   /** 是否静音 */
   val isMutedFlow: StateFlow<Boolean>
 
@@ -197,6 +200,7 @@ internal open class PlayerImpl(
   // 媒体属性
   private val _durationFlow: MutableStateFlow<Long?> = MutableStateFlow(null)
   private val _videoSizeFlow: MutableStateFlow<Pair<Int, Int>?> = MutableStateFlow(null)
+  private val _isRenderedFirstFrameFlow: MutableStateFlow<Boolean> = MutableStateFlow(false)
 
   // 控制属性
   private val _isMutedFlow: MutableStateFlow<Boolean> = MutableStateFlow(false)
@@ -225,6 +229,7 @@ internal open class PlayerImpl(
   override val exceptionFlow: StateFlow<ComposePlayerException?> = _exceptionFlow.asStateFlow()
   override val durationFlow: StateFlow<Long?> = _durationFlow.asStateFlow()
   override val videoSizeFlow: StateFlow<Pair<Int, Int>?> = _videoSizeFlow.asStateFlow()
+  override val isRenderedFirstFrameFlow: StateFlow<Boolean> = _isRenderedFirstFrameFlow.asStateFlow()
   override val isMutedFlow: StateFlow<Boolean> = _isMutedFlow.asStateFlow()
   override val speedFlow: StateFlow<Float> = _speedFlow.asStateFlow()
   override val isLoopingFlow: StateFlow<Boolean> = _isLoopingFlow.asStateFlow()
@@ -320,6 +325,7 @@ internal open class PlayerImpl(
     _seekToPositionMs = null
     _durationFlow.value = null
     _videoSizeFlow.value = null
+    _isRenderedFirstFrameFlow.value = false
     setException(null)
     setBufferState(ComposePlayerBufferState.None)
     setPlayerState(ComposePlayerState.Idle)
@@ -426,6 +432,7 @@ internal open class PlayerImpl(
         setPlayerState(ComposePlayerState.Idle)
         _durationFlow.value = null
         _videoSizeFlow.value = null
+        _isRenderedFirstFrameFlow.value = false
       }
       Player.STATE_READY -> {
         stopRetry()
@@ -461,6 +468,10 @@ internal open class PlayerImpl(
     } else {
       null
     }
+  }
+
+  override fun onRenderedFirstFrame() {
+    _isRenderedFirstFrameFlow.value = true
   }
 
   override fun onPlayerError(error: PlaybackException) {
