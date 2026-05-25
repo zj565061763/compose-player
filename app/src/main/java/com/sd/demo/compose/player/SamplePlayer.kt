@@ -71,6 +71,7 @@ private fun Content(
   val bufferState by player.bufferStateFlow.collectAsStateWithLifecycle()
   val videoSize by player.videoSizeFlow.collectAsStateWithLifecycle()
   val exception by player.exceptionFlow.collectAsStateWithLifecycle()
+  val isRenderedFirstFrameFlow by player.isRenderedFirstFrameFlow.collectAsStateWithLifecycle()
 
   LaunchedEffect(player) {
     player.setDataSource(DATA_SOURCE)
@@ -88,6 +89,10 @@ private fun Content(
         logMsg { "onPlayerError:${error.stackTraceToString()}" }
       }
     })
+  }
+
+  LaunchedEffect(isRenderedFirstFrameFlow) {
+    logMsg { "isRenderedFirstFrameFlow:$isRenderedFirstFrameFlow" }
   }
 
   Column(
