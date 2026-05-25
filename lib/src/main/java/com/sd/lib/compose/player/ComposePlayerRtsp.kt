@@ -52,8 +52,6 @@ interface ComposePlayerRtsp : ComposePlayer {
       context: Context,
       /** 是否强制使用TCP */
       forceUseRtpTcp: Boolean = true,
-      /** 是否禁用音频 */
-      disableAudio: Boolean = true,
       /** 是否开启解码回退 */
       enableDecoderFallback: Boolean = true,
       /** 进度卡住检测间隔（毫秒），大于0生效 */
@@ -72,7 +70,6 @@ interface ComposePlayerRtsp : ComposePlayer {
         playerProvider = { ctx ->
           newLivePlayer(
             context = ctx,
-            disableAudio = disableAudio,
             enableDecoderFallback = enableDecoderFallback,
           )
         },
@@ -249,7 +246,6 @@ private class RtspPlayerImpl(
 @SuppressLint("UnsafeOptInUsageError")
 private fun newLivePlayer(
   context: Context,
-  disableAudio: Boolean,
   enableDecoderFallback: Boolean,
 ): ExoPlayer {
   val loadController = DefaultLoadControl.Builder()
@@ -279,9 +275,4 @@ private fun newLivePlayer(
   return ExoPlayer.Builder(context, renderersFactory)
     .setLoadControl(loadController)
     .build()
-    .also { player ->
-      if (disableAudio) {
-        player.extSetMute(true)
-      }
-    }
 }
