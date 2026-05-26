@@ -1,12 +1,14 @@
 package com.sd.lib.compose.player
 
 import android.annotation.SuppressLint
+import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import androidx.annotation.CallSuper
 import androidx.annotation.OptIn
+import androidx.annotation.RawRes
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -187,6 +189,15 @@ suspend fun ComposePlayer.awaitDuration(): Long {
 /** 移动进度 */
 fun ComposePlayer.seekDelta(ms: Long) {
   seekTo(getCurrentPosition() + ms)
+}
+
+/** 设置数据源 */
+fun ComposePlayer.setDataSource(@RawRes resId: Int) {
+  val uri = Uri.Builder()
+    .scheme(ContentResolver.SCHEME_ANDROID_RESOURCE)
+    .path(resId.toString())
+    .build()
+  setDataSource(uri.toString())
 }
 
 @OptIn(UnstableApi::class)
