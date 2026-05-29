@@ -23,8 +23,12 @@ import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.cache.Cache
+import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -126,13 +130,24 @@ interface ComposePlayer {
       retryOnErrorInterval: Long = 10_000,
       /** 是否开启解码回退 */
       enableDecoderFallback: Boolean = true,
+      /** 缓存 */
+      cache: Cache? = null,
     ): ComposePlayer {
       return PlayerImpl(
         context = context.applicationContext,
         playerProvider = { ctx ->
           val renderersFactory = DefaultRenderersFactory(ctx)
             .setEnableDecoderFallback(enableDecoderFallback)
-          ExoPlayer.Builder(ctx, renderersFactory).build()
+
+          ExoPlayer.Builder(ctx, renderersFactory).apply {
+            if (cache != null) {
+              val cacheDataSourceFactory = CacheDataSource.Factory()
+                .setCache(cache)
+                .setUpstreamDataSourceFactory(DefaultHttpDataSource.Factory())
+                .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+              setMediaSourceFactory(DefaultMediaSourceFactory(ctx).setDataSourceFactory(cacheDataSourceFactory))
+            }
+          }.build()
         },
         setMedia = { uri -> setMediaItem(MediaItem.fromUri(uri)) },
         retryOnErrorInterval = retryOnErrorInterval,
