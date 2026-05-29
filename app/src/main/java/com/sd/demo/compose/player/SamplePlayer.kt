@@ -39,6 +39,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sd.demo.compose.player.theme.AppTheme
 import com.sd.lib.compose.player.ComposePlayer
 import com.sd.lib.compose.player.ComposePlayerBufferState
+import com.sd.lib.compose.player.ComposePlayerCache
 import com.sd.lib.compose.player.ComposePlayerException
 import com.sd.lib.compose.player.ComposePlayerState
 import com.sd.lib.compose.player.ComposePlayerView
@@ -58,13 +59,15 @@ class SamplePlayer : ComponentActivity() {
   }
 }
 
-private const val DATA_SOURCE = "asset:///demo.mp4"
+private const val DATA_SOURCE = "https://media.w3.org/2010/05/sintel/trailer.mp4"
 
 @Composable
 private fun Content(
   modifier: Modifier = Modifier,
 ) {
-  val player = rememberComposePlayer()
+  val player = rememberComposePlayer {
+    ComposePlayer.create(it, cache = ComposePlayerCache.getDefault(it))
+  }
   val context = LocalContext.current
 
   val playerState by player.playerStateFlow.collectAsStateWithLifecycle()
