@@ -1,14 +1,14 @@
 package com.sd.lib.compose.player
 
+import android.annotation.SuppressLint
 import android.content.Context
-import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import java.io.File
 
-@UnstableApi
+@SuppressLint("UnsafeOptInUsageError")
 object ComposePlayerCache {
   @Volatile
   private var _cache: SimpleCache? = null
