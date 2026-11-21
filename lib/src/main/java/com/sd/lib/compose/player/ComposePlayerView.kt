@@ -1,6 +1,7 @@
 package com.sd.lib.compose.player
 
 import android.annotation.SuppressLint
+import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -9,6 +10,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.media3.ui.compose.PlayerSurface
 import androidx.media3.ui.compose.SURFACE_TYPE_SURFACE_VIEW
@@ -16,18 +18,30 @@ import androidx.media3.ui.compose.SURFACE_TYPE_TEXTURE_VIEW
 import androidx.media3.ui.compose.modifiers.resizeWithContentScale
 import androidx.media3.ui.compose.state.rememberPresentationState
 
+/**
+ * 播放器视频渲染组件
+ *
+ * @param modifier 修饰符
+ * @param player 播放器实例（支持 [ComposePlayer] 与 [ComposePlayerRtsp]）
+ * @param contentScale 视频画面缩放模式
+ * @param surfaceType 底层渲染表面类型
+ * @param rebindKeyProvider 重新绑定渲染表面的键值提供器，跨页面共用同一 [player] 时可传入 [composePlayerViewRebindKeyOnResume]
+ */
 @SuppressLint("UnsafeOptInUsageError")
 @Composable
 fun ComposePlayerView(
   modifier: Modifier = Modifier,
-  player: ComposePlayer,
+  player: ComposePlayerCore,
   contentScale: ContentScale = ContentScale.Fit,
   surfaceType: ComposePlayerViewSurfaceType = ComposePlayerViewSurfaceType.TextureView,
   rebindKeyProvider: @Composable () -> Any = {},
 ) {
-  require(player is PlayerImpl)
+  if (LocalInspectionMode.current) {
+    Box(modifier = modifier)
+    return
+  }
 
-  val exoPlayer = player.exoPlayer
+  val exoPlayer = (player as? PlayerEngineOwner)?.engine?.exoPlayer
   val presentationState = rememberPresentationState(exoPlayer)
 
   key(rebindKeyProvider()) {
@@ -45,10 +59,7 @@ fun ComposePlayerView(
   }
 }
 
-/**
- * onResume时，重新绑定[ComposePlayer]和[ComposePlayerView]，
- * 适用于同一个[ComposePlayer]关联多个页面[ComposePlayerView]的使用场景
- */
+/** 在 `onResume` 时重新绑定 [ComposePlayerCore] 与 [ComposePlayerView]，适用于同一播放器关联多个页面的场景 */
 @Composable
 fun composePlayerViewRebindKeyOnResume(key: Any? = Unit): Any {
   var resumeCount by remember(key) { mutableIntStateOf(0) }
@@ -59,7 +70,11 @@ fun composePlayerViewRebindKeyOnResume(key: Any? = Unit): Any {
   return resumeCount
 }
 
+/** 渲染表面类型 */
 enum class ComposePlayerViewSurfaceType {
+  /** SurfaceView */
   SurfaceView,
+
+  /** TextureView */
   TextureView,
 }

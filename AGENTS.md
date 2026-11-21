@@ -1,6 +1,6 @@
 # compose-player
 
-基于 Jetpack Media3（ExoPlayer）封装的 Jetpack Compose 播放器库，支持常规音视频点播与 RTSP 低延迟直播。
+基于 Jetpack Media3（ExoPlayer）封装的 Jetpack Compose 播放器库，支持常规音视频点播与 RTSP 低延迟直播，对外完全屏蔽 Media3 类型并统一采用 `Flow` 暴露状态与事件。
 
 ## 模块与构建
 
@@ -20,38 +20,51 @@
 
 | 文件 | 核心符号 | 职责 |
 |---|---|---|
-| `ComposePlayer.kt` | `ComposePlayer`、`PlayerImpl`、`rememberComposePlayer` | 通用播放器接口、状态流、协程等待扩展及基于 `ExoPlayer` 的默认实现 |
-| `ComposePlayerRtsp.kt` | `ComposePlayerRtsp`、`RtspPlayerImpl`、`rememberComposePlayerRtsp` | RTSP 直播播放器接口与实现，内置低延迟缓冲配置、卡死看门狗与倍速追帧 |
-| `ComposePlayerView.kt` | `ComposePlayerView`、`composePlayerViewRebindKeyOnResume` | 封装 Media3 `PlayerSurface` 与缩放适配，支持多页面共用播放器时在 `onResume` 重绑渲染表面 |
-| `ComposePlayerCache.kt` | `ComposePlayerCache` | 提供懒加载单例 `SimpleCache`（目录 `cacheDir/compose_player_cache`，LRU 上限 1GB） |
-| `ComposePlayerException.kt` | `ComposePlayerException` 及其子类、`desc` | 播放异常定义、鉴权错误识别与多语言错误描述扩展 |
-| `PlayerExt.kt` | `extSetMute`、`extSetSpeed` | 封装 `Player` 音轨禁用静音与倍速调整 |
+| `ComposePlayerCore.kt` | `ComposePlayerCore`、`ComposePlayerState`、`ComposePlayerBufferState`、`positionFlow` | 点播与直播共用的密封核心接口、公共状态枚举及协程等待与进度采样扩展 |
+| `PlayerEngine.kt` | `PlayerEngine`、`PlayerEngineOwner`、`encodeUserInfoIfNeed` | 内部共享的 `ExoPlayer` 宿主引擎，负责延迟初始化、媒体绑定跟踪、状态流同步、进度采样、URI 凭据编码与错误重试调度 |
+| `ComposePlayer.kt` | `ComposePlayer`、`VodPlayerImpl`、`rememberComposePlayer` | 常规点播密封接口与组合实现，管理暂停、跳转、总时长、倍速、循环及 HTTP/缓存数据源配置 |
+| `ComposePlayerRtsp.kt` | `ComposePlayerRtsp`、`ComposePlayerRtspEvent`、`RtspPlayerImpl`、`rememberComposePlayerRtsp` | RTSP 直播密封接口与组合实现，内置低延迟缓冲配置、卡死看门狗、倍速追帧与事件流 |
+| `ComposePlayerView.kt` | `ComposePlayerView`、`composePlayerViewRebindKeyOnResume` | 封装 Media3 `PlayerSurface` 与缩放适配，兼容 Preview 占位与多页面返回重绑表面 |
+| `ComposePlayerCache.kt` | `ComposePlayerCache` | 封装 Media3 `SimpleCache`，按规范目录路径共享单例（默认目录 `cacheDir/compose_player_cache`，上限 1GB） |
+| `ComposePlayerException.kt` | `ComposePlayerException` 及其子类、`desc`、`isAuthError` | 密封播放异常体系，屏蔽底层 `PlaybackException`、精确识别 HTTP/RTSP 鉴权错误并提供多语言错误描述扩展 |
+| `PlayerExt.kt` | `extSetMute`、`extSetSpeed`、`extSetLooping` | 封装 `Player` 音轨禁用静音、倍速调整与单曲循环模式设置 |
+
+`:lib` 单元测试位于 `lib/src/test/java/com/sd/lib/compose/player/`：
+
+| 测试类 | 覆盖范围 |
+|---|---|
+| `UriUserInfoEncodeTest` | `encodeUserInfoIfNeed` 对普通凭据、含 `@`/`:`/`#`/`?`/`/`/`%` 特殊字符密码、已编码凭据幂等性及路径含 `@` URL 的处理 |
+| `AuthErrorDetectTest` | `isAuthError` 对 HTTP `401`/`403`、RTSP `401`/`403` 状态行及含 `401`/`403` 路径或端口网络异常的区分 |
 
 ## 内部实现约定
 
-### 通用播放器（`PlayerImpl`）
+### 共享引擎（`PlayerEngine`）
 
-- `_exoPlayer` 使用 Compose `mutableStateOf<ExoPlayer?>(null)` 持有，首次调用 `prepare()` 且数据源非空时才创建实例，使 `ComposePlayerView` 能自动响应底层实例的创建与释放。
-- `_requireState` 记录调用方期望的目标状态（`Playing`、`Paused`、`Idle`、`Ended`），数据源切换、`Player.STATE_READY` 回调与错误重试均按 `_requireState` 同步底层播放器。
-- `setDataSource` 会对 URI 执行 `trim()`，仅在与当前数据源不同时停止旧播放并按 `_requireState` 触发加载。
-- `prepare()` 通过 `encodeUserInfoIfNeed` 拆分 URI `userInfo` 中的用户名与密码并分别做百分比编码，兼容含 `@` 等特殊字符的鉴权凭据。
-- `ComposePlayer.create` 传入 `cache` 时，使用 `DefaultHttpDataSource.Factory` 作为上游数据源构建 `CacheDataSource` 并开启 `FLAG_IGNORE_CACHE_ON_ERROR`。
-- `exoPlayer` 未创建或总时长未知时调用 `seekTo` 会暂存至 `_seekToPositionMs`，待进入 `Player.STATE_READY` 后自动限制在 `[0, duration]` 范围内执行跳转。
+- `exoPlayer` 使用 Compose `mutableStateOf<ExoPlayer?>(null)` 持有，首次调用 `prepare()` 且数据源非空时才创建实例，供 `ComposePlayerView` 响应式感知底层实例变化。
+- `_isMediaBound` 跟踪当前数据源是否已绑定到底层 `ExoPlayer`：点播（`rebindMediaOnIdle = false`）在中途网络报错进入 `Player.STATE_IDLE` 后重试仅调用 `player.prepare()` 以保留播放断点，仅在切换数据源、`stopPlayer()` 或 `release()` 后重新绑定媒体项；直播（`rebindMediaOnIdle = true`）每次重连重新创建 `RtspMediaSource`。
+- `encodeUserInfoIfNeed` 基于 RFC 3986 直接解析原始字符串中的凭据段并做幂等百分比编码，兼容密码中包含 `@`、`:`、`#`、`?`、`/`、`%` 等特殊字符的场景。
+- `isAuthError` 按异常类型精确识别 `HttpDataSource.InvalidResponseCodeException`（状态码 `401`、`403`）、`RtspMediaSource.RtspPlaybackException`（`METHOD 401/403` 状态行）与鉴权头缺失的 `ParserException`，不对通用异常消息做裸子串匹配。
 - `extSetMute` 通过 `TrackSelectionParameters` 禁用或启用 `C.TRACK_TYPE_AUDIO` 轨道实现静音，不修改播放器音量。
-- `onPlayerError` 递归检查异常链消息是否含 `401` 或 `403`，命中时包装为 `ComposePlayerExceptionAuth` 且不发起重试。
-- 非鉴权异常在 `_requireState` 为 `Playing` 或 `Paused` 且 `retryOnErrorInterval > 0` 时通过主线程 `Handler` 延迟重试；主动调用 `play()`、`pause()`、`stop()` 会取消待执行重试，进入 `Player.STATE_READY`、`stopPlayer()` 或 `release()` 时清空 `exceptionFlow`。
+- `observePosition` 基于 `channelFlow` 实现按需采样：仅在 `ComposePlayerState.Playing` 时按间隔轮询，在状态切换、`seekTo` 或 `onPositionDiscontinuity` 时通过 `_positionChangedFlow` 立即发射最新位置，非播放态挂起无轮询开销。
+
+### 点播播放器（`VodPlayerImpl`）
+
+- 组合持有 `PlayerEngine`，通过 `_requireState`（`Playing`、`Paused`、`Idle`、`Ended`）驱动底层播放器；因失去音频焦点或拔出耳机被动暂停时同步将 `_requireState` 置为 `Paused`。
+- `ComposePlayer.create` 使用 `DefaultDataSource.Factory` 包装 `DefaultHttpDataSource.Factory`（传入 `cache` 时中间叠加 `CacheDataSource.Factory`），同时支持本地资源与 HTTP/HTTPS 缓存、请求头及音频焦点管理。
+- `setLooping` 通过 `Player.REPEAT_MODE_ONE` / `REPEAT_MODE_OFF` 实现底层无缝循环，避免循环边界触发 `ComposePlayerState.Ended`。
+- `pausePlayer()` 仅在已进入 `Player.STATE_READY` 或从 `Playing` 切入暂停时将对外状态置为 `Paused`，避免预加载或错误重试期间状态在 `Idle` 与 `Paused` 间跳变。
+- `exoPlayer` 未创建或总时长未知时调用 `seekTo` 暂存至 `_seekToPositionMs`，进入 `Player.STATE_READY` 后限制在 `[0, duration]` 范围内执行跳转。
 
 ### RTSP 直播播放器（`RtspPlayerImpl`）
 
-- 继承 `PlayerImpl`，`pause()` 直接委托 `super.stop()`，`seekTo` 与 `setLooping` 为空实现，流结束（`handleStateEnded`）时调用 `restartPlay()` 重新拉流。
+- 组合持有 `PlayerEngine`，仅通过 `_isPlayingRequested` 管理拉流意图（状态流仅在 `Idle` 与 `Playing` 间流转），被动失去 `playWhenReady` 时执行 `stop()`，流结束（`onStateEnded`）时调用 `restartPlay()` 重新拉流。
 - `newLivePlayer` 将 `DefaultLoadControl` 设为最小缓冲 32ms、起播与恢复缓冲 0ms、无后置缓冲，并将视频渲染器 `allowedVideoJoiningTimeMs` 设为 `0L` 以降低延迟。
-- 播放开始（`onIsPlayingChanged(true)`）时启动主线程看门狗 `_playWatchdogJob`，`_requireState` 离开 `Playing` 或调用 `release()` 时停止；轮询间隔在启用追帧时为 `(chaseLatency / 2).coerceAtLeast(100)`，否则为 `1000ms`。
-- 看门狗在 `currentPosition` 超过 `stuckPositionInterval` 未变化，或 `videoDecoderCounters.renderedOutputBufferCount` 超过 `stuckRenderedFrameInterval` 未增长时，触发 `EventCallback` 并调用 `restartPlay()`。
-- 看门狗在 `bufferedPosition - currentPosition > chaseLatency` 时将倍速提升为 `speedFlow.value * 1.2f` 追帧，延迟回落至 `chaseLatency / 2` 以下时恢复为 `speedFlow.value`。
+- 播放中启动主线程看门狗 `_playWatchdogJob`：进入 `Player.STATE_IDLE` 或在 `Player.STATE_READY` 下暂停渲染时立即停止看门狗并将播放倍速恢复为 `1.0f`（断流进入 `STATE_BUFFERING` 时保持监控以便超时重连）；进度或渲染帧计数停滞超时后向 `eventFlow` 发射 `ComposePlayerRtspEvent` 并调用 `restartPlay()`；当缓冲差大于 `chaseLatency` 时以 `1.2f` 倍速追帧，回落至 `chaseLatency / 2` 以下时恢复为 `1.0f`。
 
 ## 修改约束
 
-- `:lib` 通过 `api` 暴露 `media3-common`、`media3-exoplayer`、`media3-exoplayer-rtsp` 和 `media3-ui-compose`，调整依赖或公开接口时需兼顾下游兼容性。
-- `ComposePlayerView` 内部要求 `require(player is PlayerImpl)`，新增 `ComposePlayer` 实现时需继承 `PlayerImpl` 或同步调整视图绑定逻辑。
+- `:lib` 所有 Media3 依赖均声明为 `implementation`，公开 API 严禁暴露任何 `androidx.media3.*` 类型。
+- 状态与一次性事件统一通过 `StateFlow` / `Flow` 暴露，不引入命令式 `Callback` 监听接口。
+- `ComposePlayerCore`、`ComposePlayer`、`ComposePlayerRtsp` 均为 `sealed interface`，新增实现类需同时实现 `PlayerEngineOwner` 以接入 `ComposePlayerView` 与 `positionFlow`。
 - `ExoPlayer` 实例操作、状态流更新、错误重试与 RTSP 看门狗均运行在主线程，禁止在后台线程直接调用 `exoPlayer`。
 - `:lib` 字符串资源统一以 `lib_compose_player_` 为前缀，新增或修改文案时需同步维护 `values/strings.xml`、`values-en/strings.xml` 和 `values-zh-rTW/strings.xml`。

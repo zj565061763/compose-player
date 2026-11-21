@@ -35,10 +35,15 @@ dependencies {
   val composeBom = platform(libs.androidx.compose.bom)
   implementation(composeBom)
   implementation(libs.androidx.compose.foundation)
-  api(libs.androidx.media3.common)
-  api(libs.androidx.media3.exoplayer)
-  api(libs.androidx.media3.exoplayer.rtsp)
-  api(libs.androidx.media3.ui.compose)
+  implementation(libs.androidx.lifecycle.runtimeCompose)
+  implementation(libs.androidx.media3.common)
+  implementation(libs.androidx.media3.datasource)
+  implementation(libs.androidx.media3.database)
+  implementation(libs.androidx.media3.exoplayer)
+  implementation(libs.androidx.media3.exoplayer.rtsp)
+  implementation(libs.androidx.media3.ui.compose)
+
+  testImplementation(libs.junit)
 }
 
 mavenPublishing {

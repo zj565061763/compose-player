@@ -1,30 +1,20 @@
 package com.sd.lib.compose.player
 
 import android.annotation.SuppressLint
-import android.content.ContentResolver
 import android.content.Context
-import android.net.Uri
-import android.os.Handler
-import android.os.Looper
-import androidx.annotation.CallSuper
 import androidx.annotation.OptIn
-import androidx.annotation.RawRes
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.common.Timeline
-import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -35,6 +25,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 
+/** 在 Compose 中记住并在退出组合时自动释放 [ComposePlayer] */
 @Composable
 fun rememberComposePlayer(
   factory: (Context) -> ComposePlayer = { ComposePlayer.create(it) },
@@ -47,27 +38,10 @@ fun rememberComposePlayer(
   }
 }
 
-interface ComposePlayer {
-  /** 播放器状态 */
-  val playerStateFlow: StateFlow<ComposePlayerState>
-
-  /** 缓冲状态 */
-  val bufferStateFlow: StateFlow<ComposePlayerBufferState>
-
-  /** 播放异常，如果加载成功，会清空此异常 */
-  val exceptionFlow: StateFlow<ComposePlayerException?>
-
-  /** 总时长（毫秒），null表示未知，非null时一定大于0 */
+/** 常规点播播放器接口 */
+sealed interface ComposePlayer : ComposePlayerCore {
+  /** 总时长（毫秒），null 表示未知，非 null 时一定大于 0 */
   val durationFlow: StateFlow<Long?>
-
-  /** 视频分辨率（宽，高），null表示未知 ，非null时宽高一定大于0*/
-  val videoSizeFlow: StateFlow<Pair<Int, Int>?>
-
-  /** 是否已经渲染了首帧 */
-  val isRenderedFirstFrameFlow: StateFlow<Boolean>
-
-  /** 是否静音 */
-  val isMutedFlow: StateFlow<Boolean>
 
   /** 播放倍速 */
   val speedFlow: StateFlow<Float>
@@ -75,125 +49,91 @@ interface ComposePlayer {
   /** 是否循环播放 */
   val isLoopingFlow: StateFlow<Boolean>
 
-  /** 回调对象 */
-  fun setCallback(callback: Callback)
-
-  /** 设置数据源 */
-  fun setDataSource(uri: String)
-
-  /** 开始播放 */
-  fun play()
-
   /** 暂停播放 */
   fun pause()
 
-  /** 停止播放 */
-  fun stop()
-
-  /** 移动进度到指定时间点 */
+  /** 移动进度到指定时间点（毫秒） */
   fun seekTo(positionMs: Long)
 
-  /** 当前播放进度时间点（毫秒） */
-  fun getCurrentPosition(): Long
-
-  /** 总时长（毫秒），null表示未知，非null时一定大于0 */
+  /** 总时长（毫秒），null 表示未知，非 null 时一定大于 0 */
   fun getDuration(): Long?
 
-  /** 设置静音 */
-  fun setMute(mute: Boolean)
-
-  /** 设置倍速 */
+  /** 设置播放倍速 */
   fun setSpeed(speed: Float)
 
-  /** 设置循环播放 */
+  /** 设置是否循环播放 */
   fun setLooping(looping: Boolean)
 
-  /** 释放 */
-  fun release()
-
-  abstract class Callback {
-    /** 播放器状态变化 */
-    open fun onPlayerStateChanged(state: ComposePlayerState) = Unit
-
-    /** 缓冲状态变化 */
-    open fun onPlayerBufferStateChanged(state: ComposePlayerBufferState) = Unit
-
-    /** 播放器错误 */
-    open fun onPlayerError(error: ComposePlayerException) = Unit
-  }
-
   companion object {
+    /**
+     * 创建 [ComposePlayer] 实例
+     *
+     * @param context 上下文
+     * @param retryOnErrorInterval 播放错误自动重试间隔（毫秒），小于等于 0 时不重试
+     * @param enableDecoderFallback 是否开启解码器回退
+     * @param handleAudioFocus 是否自动管理音频焦点
+     * @param handleAudioBecomingNoisy 拔出耳机等音频输出切换时是否自动暂停
+     * @param httpHeaders 自定义 HTTP 请求头
+     * @param connectTimeoutMs HTTP 连接超时时间（毫秒）
+     * @param readTimeoutMs HTTP 读取超时时间（毫秒）
+     * @param allowCrossProtocolRedirects 是否允许 HTTP 与 HTTPS 跨协议重定向
+     * @param cache 磁盘缓存配置
+     */
     @SuppressLint("UnsafeOptInUsageError")
     fun create(
       context: Context,
-      /** 播放错误，重试间隔（毫秒） */
       retryOnErrorInterval: Long = 10_000,
-      /** 是否开启解码回退 */
       enableDecoderFallback: Boolean = true,
-      /** 缓存 */
-      cache: Cache? = null,
+      handleAudioFocus: Boolean = true,
+      handleAudioBecomingNoisy: Boolean = true,
+      httpHeaders: Map<String, String> = emptyMap(),
+      connectTimeoutMs: Int = 8_000,
+      readTimeoutMs: Int = 8_000,
+      allowCrossProtocolRedirects: Boolean = true,
+      cache: ComposePlayerCache? = null,
     ): ComposePlayer {
-      return PlayerImpl(
-        context = context.applicationContext,
+      val appContext = context.applicationContext
+      return VodPlayerImpl(
+        context = appContext,
+        retryOnErrorInterval = retryOnErrorInterval,
         playerProvider = { ctx ->
           val renderersFactory = DefaultRenderersFactory(ctx)
             .setEnableDecoderFallback(enableDecoderFallback)
 
-          ExoPlayer.Builder(ctx, renderersFactory).apply {
-            if (cache != null) {
-              val cacheDataSourceFactory = CacheDataSource.Factory()
-                .setCache(cache)
-                .setUpstreamDataSourceFactory(DefaultHttpDataSource.Factory())
-                .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
-              setMediaSourceFactory(DefaultMediaSourceFactory(ctx).setDataSourceFactory(cacheDataSourceFactory))
+          val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+            .setConnectTimeoutMs(connectTimeoutMs)
+            .setReadTimeoutMs(readTimeoutMs)
+            .setAllowCrossProtocolRedirects(allowCrossProtocolRedirects)
+            .also { factory ->
+              if (httpHeaders.isNotEmpty()) {
+                factory.setDefaultRequestProperties(httpHeaders)
+              }
             }
-          }.build()
+
+          val baseDataSourceFactory = if (cache != null) {
+            CacheDataSource.Factory()
+              .setCache(cache.cache)
+              .setUpstreamDataSourceFactory(httpDataSourceFactory)
+              .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+          } else {
+            httpDataSourceFactory
+          }
+
+          val dataSourceFactory = DefaultDataSource.Factory(ctx, baseDataSourceFactory)
+          val audioAttributes = AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+            .build()
+
+          ExoPlayer.Builder(ctx, renderersFactory)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(ctx).setDataSourceFactory(dataSourceFactory))
+            .setAudioAttributes(audioAttributes, handleAudioFocus)
+            .setHandleAudioBecomingNoisy(handleAudioBecomingNoisy)
+            .build()
         },
-        setMedia = { uri -> setMediaItem(MediaItem.fromUri(uri)) },
-        retryOnErrorInterval = retryOnErrorInterval,
       )
     }
   }
-}
-
-enum class ComposePlayerState {
-  /** 空闲 */
-  Idle,
-
-  /** 播放中 */
-  Playing,
-
-  /** 暂停 */
-  Paused,
-
-  /** 播放结束 */
-  Ended,
-}
-
-enum class ComposePlayerBufferState {
-  /** 空闲 */
-  None,
-
-  /** 缓冲中 */
-  Buffering,
-
-  /** 准备完毕 */
-  Ready,
-}
-
-/** 挂起等待播放器处于指定状态[state] */
-suspend fun ComposePlayer.awaitPlayerState(state: ComposePlayerState) {
-  playerStateFlow.first { it == state }
-}
-
-/** 挂起等待缓冲准备完毕[ComposePlayerBufferState.Ready] */
-suspend fun ComposePlayer.awaitBufferReady() {
-  bufferStateFlow.first { it == ComposePlayerBufferState.Ready }
-}
-
-/** 挂起等待首帧渲染完毕 */
-suspend fun ComposePlayer.awaitRenderedFirstFrame() {
-  isRenderedFirstFrameFlow.first { it }
 }
 
 /** 挂起等待获取总时长[ComposePlayer.durationFlow] */
@@ -201,103 +141,79 @@ suspend fun ComposePlayer.awaitDuration(): Long {
   return durationFlow.filterNotNull().first()
 }
 
-/** 移动进度 */
+/** 按偏移量（毫秒）移动播放进度 */
 fun ComposePlayer.seekDelta(ms: Long) {
   seekTo(getCurrentPosition() + ms)
 }
 
-/** 设置数据源 */
-fun ComposePlayer.setDataSource(@RawRes resId: Int) {
-  val uri = Uri.Builder()
-    .scheme(ContentResolver.SCHEME_ANDROID_RESOURCE)
-    .path(resId.toString())
-    .build()
-  setDataSource(uri.toString())
-}
-
 @OptIn(UnstableApi::class)
-internal open class PlayerImpl(
-  private val context: Context,
+internal class VodPlayerImpl(
+  context: Context,
+  retryOnErrorInterval: Long,
   private val playerProvider: (Context) -> ExoPlayer,
-  private val setMedia: ExoPlayer.(String) -> Unit,
-  private val retryOnErrorInterval: Long,
-) : ComposePlayer, Player.Listener {
-  private var _exoPlayer by mutableStateOf<ExoPlayer?>(null)
-
-  private val _playerStateFlow: MutableStateFlow<ComposePlayerState> = MutableStateFlow(ComposePlayerState.Idle)
-  private val _bufferStateFlow: MutableStateFlow<ComposePlayerBufferState> = MutableStateFlow(ComposePlayerBufferState.None)
-  private val _exceptionFlow: MutableStateFlow<ComposePlayerException?> = MutableStateFlow(null)
-
-  // 媒体属性
-  private val _durationFlow: MutableStateFlow<Long?> = MutableStateFlow(null)
-  private val _videoSizeFlow: MutableStateFlow<Pair<Int, Int>?> = MutableStateFlow(null)
-  private val _isRenderedFirstFrameFlow: MutableStateFlow<Boolean> = MutableStateFlow(false)
-
-  // 控制属性
-  private val _isMutedFlow: MutableStateFlow<Boolean> = MutableStateFlow(false)
-  private val _speedFlow: MutableStateFlow<Float> = MutableStateFlow(1.0f)
-  private val _isLoopingFlow: MutableStateFlow<Boolean> = MutableStateFlow(false)
+) : ComposePlayer, PlayerEngineOwner {
+  private val _durationFlow = MutableStateFlow<Long?>(null)
+  private val _speedFlow = MutableStateFlow(1.0f)
+  private val _isLoopingFlow = MutableStateFlow(false)
 
   private var _requireState: ComposePlayerState? = null
-    set(value) {
-      if (field != value) {
-        field = value
-        onRequireStateChanged(value)
-      }
-    }
-
-  private var _dataSource: String? = null
   private var _seekToPositionMs: Long? = null
-  private var _callback: ComposePlayer.Callback? = null
 
-  protected val handler = Handler(Looper.getMainLooper())
+  override val engine: PlayerEngine = PlayerEngine(
+    context = context,
+    retryOnErrorInterval = retryOnErrorInterval,
+    rebindMediaOnIdle = false,
+    callback = EngineCallback(),
+  )
 
-  val exoPlayer: ExoPlayer?
-    get() = _exoPlayer
+  override val playerStateFlow: StateFlow<ComposePlayerState>
+    get() = engine.playerStateFlow
 
-  override val playerStateFlow: StateFlow<ComposePlayerState> = _playerStateFlow.asStateFlow()
-  override val bufferStateFlow: StateFlow<ComposePlayerBufferState> = _bufferStateFlow.asStateFlow()
-  override val exceptionFlow: StateFlow<ComposePlayerException?> = _exceptionFlow.asStateFlow()
+  override val bufferStateFlow: StateFlow<ComposePlayerBufferState>
+    get() = engine.bufferStateFlow
+
+  override val exceptionFlow: StateFlow<ComposePlayerException?>
+    get() = engine.exceptionFlow
+
+  override val videoSizeFlow: StateFlow<Pair<Int, Int>?>
+    get() = engine.videoSizeFlow
+
+  override val isRenderedFirstFrameFlow: StateFlow<Boolean>
+    get() = engine.isRenderedFirstFrameFlow
+
+  override val isMutedFlow: StateFlow<Boolean>
+    get() = engine.isMutedFlow
+
   override val durationFlow: StateFlow<Long?> = _durationFlow.asStateFlow()
-  override val videoSizeFlow: StateFlow<Pair<Int, Int>?> = _videoSizeFlow.asStateFlow()
-  override val isRenderedFirstFrameFlow: StateFlow<Boolean> = _isRenderedFirstFrameFlow.asStateFlow()
-  override val isMutedFlow: StateFlow<Boolean> = _isMutedFlow.asStateFlow()
   override val speedFlow: StateFlow<Float> = _speedFlow.asStateFlow()
   override val isLoopingFlow: StateFlow<Boolean> = _isLoopingFlow.asStateFlow()
 
-  override fun setCallback(callback: ComposePlayer.Callback) {
-    _callback = callback
-  }
-
   override fun setDataSource(uri: String) {
-    val safeUri = uri.trim()
-    if (_dataSource != safeUri) {
-      _dataSource = safeUri
-      stopPlayer()
-      updatePlayer()
+    if (engine.setDataSource(uri)) {
+      syncPlayer()
     }
   }
 
   override fun play() {
     _requireState = ComposePlayerState.Playing
-    stopRetry()
-    updatePlayer()
+    engine.stopRetry()
+    syncPlayer()
   }
 
   override fun pause() {
     _requireState = ComposePlayerState.Paused
-    stopRetry()
-    updatePlayer()
+    engine.stopRetry()
+    syncPlayer()
   }
 
   override fun stop() {
     _requireState = ComposePlayerState.Idle
-    stopRetry()
-    updatePlayer()
+    engine.stopRetry()
+    syncPlayer()
   }
 
   override fun seekTo(positionMs: Long) {
-    val player = _exoPlayer
+    val player = engine.exoPlayer
     if (player == null) {
       _seekToPositionMs = positionMs
       return
@@ -312,59 +228,46 @@ internal open class PlayerImpl(
     val targetPosition = positionMs.coerceIn(0L, duration)
     player.seekTo(targetPosition)
     _seekToPositionMs = null
+    engine.notifyPositionChanged()
   }
 
   override fun getCurrentPosition(): Long {
-    return (_exoPlayer?.currentPosition ?: 0L).coerceAtLeast(0L)
+    return engine.getCurrentPosition()
   }
 
   override fun getDuration(): Long? {
-    val duration = _exoPlayer?.duration ?: return null
+    val duration = engine.exoPlayer?.duration ?: return null
     return if (duration == C.TIME_UNSET) null else duration.takeIf { it > 0 }
   }
 
   override fun setMute(mute: Boolean) {
-    if (_isMutedFlow.value != mute) {
-      _isMutedFlow.value = mute
-      _exoPlayer?.extSetMute(mute)
-    }
+    engine.setMute(mute)
   }
 
   override fun setSpeed(speed: Float) {
     if (_speedFlow.value != speed) {
       _speedFlow.value = speed
-      _exoPlayer?.extSetSpeed(speed)
+      engine.exoPlayer?.extSetSpeed(speed)
     }
   }
 
   override fun setLooping(looping: Boolean) {
-    _isLoopingFlow.value = looping
+    if (_isLoopingFlow.value != looping) {
+      _isLoopingFlow.value = looping
+      engine.exoPlayer?.extSetLooping(looping)
+    }
   }
 
-  @CallSuper
   override fun release() {
-    stop()
-
     _requireState = null
-    _exoPlayer?.also {
-      _exoPlayer = null
-      it.clearVideoSurface()
-      it.release()
-    }
-
-    _dataSource = null
     _seekToPositionMs = null
     _durationFlow.value = null
-    _videoSizeFlow.value = null
-    _isRenderedFirstFrameFlow.value = false
-    setException(null)
-    setBufferState(ComposePlayerBufferState.None)
-    setPlayerState(ComposePlayerState.Idle)
+    engine.release()
   }
 
-  private fun updatePlayer() {
+  private fun syncPlayer() {
     when (_requireState) {
-      ComposePlayerState.Idle -> stopPlayer()
+      ComposePlayerState.Idle -> engine.stopPlayer()
       ComposePlayerState.Playing -> startPlayer()
       ComposePlayerState.Paused -> pausePlayer()
       ComposePlayerState.Ended -> {}
@@ -372,37 +275,8 @@ internal open class PlayerImpl(
     }
   }
 
-  private fun prepare() {
-    val dataSource = _dataSource ?: return
-    if (dataSource.isBlank()) {
-      setException(ComposePlayerExceptionDataSourceBlank())
-      return
-    }
-
-    val player = _exoPlayer ?: playerProvider(context).also { player ->
-      _exoPlayer = player
-      player.playWhenReady = false
-      if (_isMutedFlow.value) player.extSetMute(true)
-      if (_speedFlow.value != 1.0f) player.extSetSpeed(_speedFlow.value)
-      player.addListener(this@PlayerImpl)
-    }
-
-    if (player.playbackState == Player.STATE_IDLE) {
-      runCatching {
-        encodeUserInfoIfNeed(dataSource)
-      }.onSuccess { uri ->
-        setMedia(player, uri)
-        player.prepare()
-      }.onFailure { e ->
-        setException(ComposePlayerExceptionDataSource(cause = e))
-      }
-    }
-  }
-
-  /** 开始播放 */
-  protected fun startPlayer() {
-    prepare()
-    _exoPlayer?.also { player ->
+  private fun startPlayer() {
+    engine.prepare()?.also { player ->
       if (player.playbackState == Player.STATE_ENDED) {
         player.seekTo(0)
       }
@@ -410,81 +284,15 @@ internal open class PlayerImpl(
     }
   }
 
-  /** 停止播放 */
-  protected fun stopPlayer() {
-    stopRetry()
-    _seekToPositionMs = null
-    setException(null)
-    _exoPlayer?.also { player ->
-      if (player.playbackState != Player.STATE_IDLE) {
-        player.stop()
-      }
-    }
-  }
-
-  /** 暂停播放 */
   private fun pausePlayer() {
-    prepare()
-    _exoPlayer?.also { player ->
+    engine.prepare()?.also { player ->
       player.pause()
-      setPlayerState(ComposePlayerState.Paused)
-    }
-  }
-
-  @CallSuper
-  override fun onIsPlayingChanged(isPlaying: Boolean) {
-    if (isPlaying) {
-      setPlayerState(ComposePlayerState.Playing)
-    } else {
-      if (_requireState == ComposePlayerState.Paused
-        || (_exoPlayer?.playbackState ?: Player.STATE_IDLE) == Player.STATE_READY
+      if (player.playbackState == Player.STATE_READY
+        || engine.playerStateFlow.value == ComposePlayerState.Playing
       ) {
-        setPlayerState(ComposePlayerState.Paused)
+        engine.setPlayerState(ComposePlayerState.Paused)
       }
     }
-  }
-
-  @CallSuper
-  override fun onPlaybackStateChanged(playbackState: Int) {
-    when (playbackState) {
-      Player.STATE_BUFFERING -> {
-        setBufferState(ComposePlayerBufferState.Buffering)
-      }
-      Player.STATE_READY -> {
-        setBufferState(ComposePlayerBufferState.Ready)
-      }
-      else -> {
-        setBufferState(ComposePlayerBufferState.None)
-      }
-    }
-
-    when (playbackState) {
-      Player.STATE_IDLE -> {
-        setPlayerState(ComposePlayerState.Idle)
-        _durationFlow.value = null
-        _videoSizeFlow.value = null
-        _isRenderedFirstFrameFlow.value = false
-      }
-      Player.STATE_READY -> {
-        stopRetry()
-        setException(null)
-        _seekToPositionMs?.also { seekTo(it) }
-        updateDurationFlow()
-        updatePlayer()
-      }
-      Player.STATE_ENDED -> {
-        handleStateEnded()
-      }
-      else -> {}
-    }
-  }
-
-  override fun onTimelineChanged(timeline: Timeline, reason: Int) {
-    updateDurationFlow()
-  }
-
-  override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-    updateDurationFlow()
   }
 
   private fun updateDurationFlow() {
@@ -493,150 +301,75 @@ internal open class PlayerImpl(
     }
   }
 
-  override fun onVideoSizeChanged(videoSize: VideoSize) {
-    _videoSizeFlow.value = if (videoSize.width > 0 && videoSize.height > 0) {
-      Pair(videoSize.width, videoSize.height)
-    } else {
-      null
+  private inner class EngineCallback : PlayerEngine.Callback {
+    override fun createExoPlayer(context: Context): ExoPlayer {
+      return playerProvider(context)
     }
-  }
 
-  override fun onRenderedFirstFrame() {
-    _isRenderedFirstFrameFlow.value = true
-  }
-
-  override fun onPlayerError(error: PlaybackException) {
-    if (shouldRetry(error) && startRetry()) {
-      // 已经发起重试
-    } else {
-      _requireState = ComposePlayerState.Idle
+    override fun bindMedia(player: ExoPlayer, uri: String) {
+      player.setMediaItem(MediaItem.fromUri(uri))
     }
-    setException(wrapPlaybackException(error))
-  }
 
-  protected open fun onRequireStateChanged(state: ComposePlayerState?) = Unit
-
-  protected open fun handleStateEnded() {
-    _requireState = ComposePlayerState.Ended
-    setPlayerState(ComposePlayerState.Ended)
-    if (_isLoopingFlow.value) play()
-  }
-
-  /** 是否应该重试 */
-  private fun shouldRetry(error: PlaybackException): Boolean {
-    return when {
-      error.isAuthError() -> false
-      else -> true
-    }
-  }
-
-  /** 包装异常 */
-  private fun wrapPlaybackException(error: PlaybackException): ComposePlayerException {
-    return when {
-      error.isAuthError() -> ComposePlayerExceptionAuth()
-      else -> ComposePlayerExceptionPlaybackException(error)
-    }
-  }
-
-  private fun setPlayerState(state: ComposePlayerState) {
-    if (_playerStateFlow.value == state) return
-    _playerStateFlow.value = state
-    _callback?.onPlayerStateChanged(state)
-  }
-
-  private fun setBufferState(state: ComposePlayerBufferState) {
-    if (_bufferStateFlow.value == state) return
-    _bufferStateFlow.value = state
-    _callback?.onPlayerBufferStateChanged(state)
-  }
-
-  private fun setException(error: ComposePlayerException?) {
-    _exceptionFlow.value = error
-    if (error != null) {
-      _callback?.onPlayerError(error)
-    }
-  }
-
-  private var _retryJob: Runnable? = null
-
-  private fun startRetry(): Boolean {
-    if (retryOnErrorInterval <= 0) return false
-    return when (val requireState = _requireState) {
-      ComposePlayerState.Playing,
-      ComposePlayerState.Paused,
-        -> {
-        Runnable {
-          when (requireState) {
-            ComposePlayerState.Playing -> startPlayer()
-            ComposePlayerState.Paused -> pausePlayer()
-            else -> error("This should not happen")
-          }
-        }.also { job ->
-          stopRetry()
-          _retryJob = job
-          handler.postDelayed(job, retryOnErrorInterval)
-        }
-        true
+    override fun onPlayerCreated(player: ExoPlayer) {
+      if (_speedFlow.value != 1.0f) {
+        player.extSetSpeed(_speedFlow.value)
       }
-      else -> false
+      if (_isLoopingFlow.value) {
+        player.extSetLooping(true)
+      }
+    }
+
+    override fun onStopped() {
+      _seekToPositionMs = null
+    }
+
+    override fun onIsPlayingChanged(player: ExoPlayer?, isPlaying: Boolean) {
+      if (isPlaying) {
+        engine.setPlayerState(ComposePlayerState.Playing)
+      } else if ((player?.playbackState ?: Player.STATE_IDLE) == Player.STATE_READY) {
+        engine.setPlayerState(ComposePlayerState.Paused)
+      }
+    }
+
+    override fun onPlayWhenReadyLost() {
+      if (_requireState == ComposePlayerState.Playing) {
+        _requireState = ComposePlayerState.Paused
+      }
+    }
+
+    override fun onStateIdle() {
+      _durationFlow.value = null
+    }
+
+    override fun onStateReady(player: ExoPlayer) {
+      updateDurationFlow()
+      _seekToPositionMs?.also { seekTo(it) }
+      syncPlayer()
+    }
+
+    override fun onStateEnded(player: ExoPlayer) {
+      _requireState = ComposePlayerState.Ended
+      engine.setPlayerState(ComposePlayerState.Ended)
+    }
+
+    override fun onTimelineOrMediaChanged(player: ExoPlayer) {
+      updateDurationFlow()
+    }
+
+    override fun onPlayerError(error: PlaybackException) {
+      val requireState = _requireState
+      val canRetry = !error.isAuthError()
+        && (requireState == ComposePlayerState.Playing || requireState == ComposePlayerState.Paused)
+      val scheduled = canRetry && engine.startRetry {
+        when (requireState) {
+          ComposePlayerState.Playing -> startPlayer()
+          ComposePlayerState.Paused -> pausePlayer()
+          else -> {}
+        }
+      }
+      if (!scheduled) {
+        _requireState = ComposePlayerState.Idle
+      }
     }
   }
-
-  private fun stopRetry() {
-    _retryJob?.also {
-      _retryJob = null
-      handler.removeCallbacks(it)
-    }
-  }
-}
-
-private fun encodeUserInfoIfNeed(uri: String): String {
-  if (uri.isEmpty()) return uri
-
-  @SuppressLint("UseKtx")
-  val androidUri = Uri.parse(uri)
-
-  // 获取原始的 encodedUserInfo（带百分比编码的），如果本身没带凭据则直接返回
-  val rawEncodedUserInfo = androidUri.encodedUserInfo ?: return uri
-  if (rawEncodedUserInfo.isEmpty()) return uri
-
-  // 获取解码后的 userInfo 进行拆分，如果为空也返回
-  val decodedUserInfo = androidUri.userInfo ?: return uri
-  if (decodedUserInfo.isEmpty()) return uri
-
-  // 拆分用户名和密码
-  val parts = decodedUserInfo.split(":", limit = 2)
-  val username = parts[0]
-  val password = if (parts.size > 1) parts[1] else null
-
-  // 分别对用户名和密码进行标准的百分比编码
-  val encodedUsername = Uri.encode(username)
-  val encodedPassword = password?.let { Uri.encode(it) }
-
-  // 重新组合编码后的 UserInfo
-  val newUserInfo = if (encodedPassword != null) {
-    "$encodedUsername:$encodedPassword"
-  } else {
-    encodedUsername
-  }
-
-  // 如果编码后和原始的一样，说明不需要处理
-  if (newUserInfo == rawEncodedUserInfo) return uri
-
-  // 获取原始的 encodedAuthority (例如 "user:pass@192.168.1.1:554")
-  val authority = androidUri.encodedAuthority ?: return uri
-
-  val index = authority.lastIndexOf('@')
-  val newAuthority = if (index >= 0) {
-    // 替换 '@' 之前的部分，保留 '@' 及其之后的部分（host:port）
-    newUserInfo + authority.substring(index)
-  } else {
-    // 理论上 rawEncodedUserInfo 不为空时 index 必定 >= 0，这里做个保险
-    "$newUserInfo@$authority"
-  }
-
-  return androidUri.buildUpon()
-    .encodedAuthority(newAuthority)
-    .build()
-    .toString()
 }

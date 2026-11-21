@@ -1,12 +1,13 @@
 package com.sd.lib.compose.player
 
+import androidx.media3.common.C
 import androidx.media3.common.Player
 
 /** 设置静音 */
 internal fun Player.extSetMute(mute: Boolean) {
   trackSelectionParameters = trackSelectionParameters
     .buildUpon()
-    .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, mute)
+    .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, mute)
     .build()
 }
 
@@ -14,5 +15,13 @@ internal fun Player.extSetMute(mute: Boolean) {
 internal fun Player.extSetSpeed(speed: Float) {
   if (playbackParameters.speed != speed) {
     playbackParameters = playbackParameters.withSpeed(speed)
+  }
+}
+
+/** 设置单曲循环模式 */
+internal fun Player.extSetLooping(looping: Boolean) {
+  val targetMode = if (looping) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+  if (repeatMode != targetMode) {
+    repeatMode = targetMode
   }
 }

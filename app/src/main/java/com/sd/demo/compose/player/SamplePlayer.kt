@@ -25,9 +25,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -40,13 +38,14 @@ import com.sd.demo.compose.player.theme.AppTheme
 import com.sd.lib.compose.player.ComposePlayer
 import com.sd.lib.compose.player.ComposePlayerBufferState
 import com.sd.lib.compose.player.ComposePlayerCache
-import com.sd.lib.compose.player.ComposePlayerException
 import com.sd.lib.compose.player.ComposePlayerState
 import com.sd.lib.compose.player.ComposePlayerView
 import com.sd.lib.compose.player.desc
+import com.sd.lib.compose.player.positionFlow
 import com.sd.lib.compose.player.rememberComposePlayer
 import com.sd.lib.compose.player.seekDelta
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.launch
 
 class SamplePlayer : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -79,19 +78,24 @@ private fun Content(
   LaunchedEffect(player) {
     player.setDataSource(DATA_SOURCE)
     player.setLooping(true)
-    player.setCallback(object : ComposePlayer.Callback() {
-      override fun onPlayerStateChanged(state: ComposePlayerState) {
+
+    launch {
+      player.playerStateFlow.collect { state ->
         logMsg { "onPlayerStateChanged:$state" }
       }
+    }
 
-      override fun onPlayerBufferStateChanged(state: ComposePlayerBufferState) {
+    launch {
+      player.bufferStateFlow.collect { state ->
         logMsg { "onPlayerBufferStateChanged:$state" }
       }
+    }
 
-      override fun onPlayerError(error: ComposePlayerException) {
+    launch {
+      player.exceptionFlow.filterNotNull().collect { error ->
         logMsg { "onPlayerError:${error.stackTraceToString()}" }
       }
-    })
+    }
   }
 
   LaunchedEffect(isRenderedFirstFrameFlow) {
@@ -235,21 +239,13 @@ private fun VideoDurationView(
   val durationState = player.durationFlow.collectAsStateWithLifecycle()
   val duration = durationState.value ?: return
 
-  var time by remember { mutableStateOf("") }
+  val positionFlow = remember(player) { player.positionFlow() }
+  val position by positionFlow.collectAsStateWithLifecycle(initialValue = player.getCurrentPosition())
 
-  LaunchedEffect(player, duration) {
-    while (true) {
-      time = "${formatDuration(player.getCurrentPosition())}/${formatDuration(duration)}"
-      delay(200)
-    }
-  }
-
-  if (time.isNotEmpty()) {
-    Text(
-      modifier = modifier,
-      text = time,
-    )
-  }
+  Text(
+    modifier = modifier,
+    text = "${formatDuration(position)}/${formatDuration(duration)}",
+  )
 }
 
 /** 视频进度 */
@@ -261,7 +257,7 @@ private fun VideoProgressView(
 ) {
   // 视频总时长
   val durationState = player.durationFlow.collectAsStateWithLifecycle()
-  val duration = if (LocalInspectionMode.current) 10000 else durationState.value
+  val duration = if (LocalInspectionMode.current) 10000L else durationState.value
 
   if (duration == null) {
     // 如果未获取到，不显示控件
@@ -282,16 +278,15 @@ private fun VideoProgressView(
     }
   }
 
-  val playerState by player.playerStateFlow.collectAsStateWithLifecycle()
   val interactionSource = remember { MutableInteractionSource() }
   val isDragged by interactionSource.collectIsDraggedAsState()
+  val positionFlow = remember(player) { player.positionFlow() }
 
-  // 如果没有拖动且正在播放，则更新进度
-  if (!isDragged && playerState == ComposePlayerState.Playing) {
-    LaunchedEffect(player) {
-      while (true) {
-        sliderState.value = player.getCurrentPosition().toFloat()
-        delay(200)
+  // 如果没有拖动，则按需同步进度流
+  if (!isDragged) {
+    LaunchedEffect(positionFlow, sliderState) {
+      positionFlow.collect { position ->
+        sliderState.value = position.toFloat()
       }
     }
   }

@@ -31,14 +31,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sd.demo.compose.player.theme.AppTheme
-import com.sd.lib.compose.player.ComposePlayer
-import com.sd.lib.compose.player.ComposePlayerException
-import com.sd.lib.compose.player.ComposePlayerRtsp
-import com.sd.lib.compose.player.ComposePlayerState
+import com.sd.lib.compose.player.ComposePlayerCore
 import com.sd.lib.compose.player.ComposePlayerView
 import com.sd.lib.compose.player.desc
+import com.sd.lib.compose.player.positionFlow
 import com.sd.lib.compose.player.rememberComposePlayerRtsp
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.launch
 
 class SamplePlayerRtsp : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -69,24 +68,23 @@ private fun Content(
   val isRenderedFirstFrameFlow by player.isRenderedFirstFrameFlow.collectAsStateWithLifecycle()
 
   LaunchedEffect(player) {
-    player.setCallback(object : ComposePlayer.Callback() {
-      override fun onPlayerStateChanged(state: ComposePlayerState) {
+    launch {
+      player.playerStateFlow.collect { state ->
         logMsg { "onPlayerStateChanged:$state" }
       }
+    }
 
-      override fun onPlayerError(error: ComposePlayerException) {
+    launch {
+      player.exceptionFlow.filterNotNull().collect { error ->
         logMsg { "onPlayerError:${error.stackTraceToString()}" }
       }
-    })
-    player.setEventCallback(object : ComposePlayerRtsp.EventCallback() {
-      override fun onStuckPosition() {
-        logMsg { "onStuckPosition" }
-      }
+    }
 
-      override fun onStuckRenderedFrame() {
-        logMsg { "onStuckRenderedFrame" }
+    launch {
+      player.eventFlow.collect { event ->
+        logMsg { "onEvent:$event" }
       }
-    })
+    }
   }
 
   LaunchedEffect(isRenderedFirstFrameFlow) {
@@ -169,21 +167,13 @@ private fun Content(
 @Composable
 private fun VideoDurationView(
   modifier: Modifier = Modifier,
-  player: ComposePlayer,
+  player: ComposePlayerCore,
 ) {
-  var time by remember { mutableStateOf("") }
+  val positionFlow = remember(player) { player.positionFlow() }
+  val position by positionFlow.collectAsStateWithLifecycle(initialValue = player.getCurrentPosition())
 
-  LaunchedEffect(player) {
-    while (true) {
-      time = "${player.getCurrentPosition()}｜${formatDuration(player.getCurrentPosition())}"
-      delay(200)
-    }
-  }
-
-  if (time.isNotEmpty()) {
-    Text(
-      modifier = modifier,
-      text = time,
-    )
-  }
+  Text(
+    modifier = modifier,
+    text = "$position｜${formatDuration(position)}",
+  )
 }
