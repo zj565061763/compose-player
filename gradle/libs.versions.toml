@@ -10,6 +10,9 @@ composeCompiler = "1.5.15"
 
 lifecycle = "2.8.7"
 media3 = "1.9.3"
+coroutines = "1.9.0"
+robolectric = "4.17"
+androidxTestCore = "1.6.1"
 
 maven-publish = "0.32.0"
 
@@ -26,8 +29,11 @@ androidx-lifecycle-viewmodelCompose = { module = "androidx.lifecycle:lifecycle-v
 androidx-lifecycle-runtimeCompose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
 
 junit = "junit:junit:4.13.2"
+androidx-test-core = { module = "androidx.test:core", version.ref = "androidxTestCore" }
 androidx-test-ext-junit = "androidx.test.ext:junit:1.3.0"
 androidx-test-espresso-core = "androidx.test.espresso:espresso-core:3.7.0"
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 
 androidx-media3-common = { module = "androidx.media3:media3-common", version.ref = "media3" }
 androidx-media3-datasource = { module = "androidx.media3:media3-datasource", version.ref = "media3" }

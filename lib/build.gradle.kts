@@ -29,6 +29,12 @@ android {
   composeOptions {
     kotlinCompilerExtensionVersion = libs.versions.composeCompiler.get()
   }
+
+  testOptions {
+    unitTests {
+      isIncludeAndroidResources = true
+    }
+  }
 }
 
 dependencies {
@@ -44,6 +50,9 @@ dependencies {
   implementation(libs.androidx.media3.ui.compose)
 
   testImplementation(libs.junit)
+  testImplementation(libs.androidx.test.core)
+  testImplementation(libs.kotlinx.coroutines.test)
+  testImplementation(libs.robolectric)
 }
 
 mavenPublishing {

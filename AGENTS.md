@@ -30,12 +30,17 @@
 | `ComposePlayerException.kt` | `ComposePlayerException` 及其子类、`desc`、`isAuthError` | 密封播放异常体系，屏蔽底层 `PlaybackException`、精确识别 HTTP/RTSP 鉴权错误（保留底层 `cause`）并提供多语言错误描述扩展 |
 | `PlayerExt.kt` | `newMediaAudioAttributes`、`extSetMute`、`extSetSpeed`、`extSetLooping` | 封装默认媒体音频属性构建及 `Player` 音量静音、倍速调整与单曲循环模式设置 |
 
-`:lib` 单元测试位于 `lib/src/test/java/com/sd/lib/compose/player/`：
+`:lib` 单元测试位于 `lib/src/test/java/com/sd/lib/compose/player/`（测试辅助基座为 `FakeExoPlayerController.kt`）：
 
 | 测试类 | 覆盖范围 |
 |---|---|
 | `UriUserInfoEncodeTest` | `encodeUserInfoIfNeed` 对普通凭据、含特殊字符的用户名与密码、已编码凭据幂等性、路径/参数/片段含 `@` URL 的处理，以及 `isValidRtspUri` 对协议、端口、IPv4/IPv6 主机的校验 |
-| `AuthErrorDetectTest` | `isAuthError` 与 `toComposePlayerException` 对 HTTP/RTSP `401`/`403`、缺失鉴权头 `ParserException`、`cause` 保留及含 `401`/`403` 路径或端口网络异常的区分 |
+| `AuthErrorDetectTest` | `isAuthError` 与 `toComposePlayerException` 对 HTTP/RTSP `401`/`403`、缺失鉴权头 `ParserException`、`cause` 保留、路径/端口网络异常区分，以及 `desc` 多语言文案格式化 |
+| `PlayerExtTest` | `newMediaAudioAttributes` 默认媒体音频属性构建，以及 `extSetMute`、`extSetSpeed`、`extSetLooping` 的状态同步与幂等去重 |
+| `ComposePlayerCacheTest` | `ComposePlayerCache.create` 非正容量参数校验、`getDefault` 单例复用，以及等价规范目录路径共享同一底层 `SimpleCache` 实例 |
+| `ComposePlayerCoreFlowTest` | `positionFlow` 非正间隔兜底、播放态按需轮询、非播放态挂起、跳转与不连续事件立即发射、重复位置去重，以及 `awaitPlayerState`、`awaitBufferReady`、`awaitRenderedFirstFrame`、`awaitDuration` 挂起等待扩展 |
+| `ComposePlayerVodTest` | `VodPlayerImpl` 延迟初始化与预设属性继承、`setSpeed` 参数校验、空白/重复数据源处理、`prepare` 预加载与报错期切换、切源延迟起播与同帧 `seekTo`/`prepare`/`pause` 覆盖、`seekTo`/`seekDelta` 裁剪与片尾回退重播、短暂音频抑制与焦点丢失、错误复位时序、`BEHIND_LIVE_WINDOW` 恢复、自动重试与鉴权停试、Raw 资源绑定与 `release` 复用 |
+| `ComposePlayerRtspTest` | `RtspPlayerImpl` 协议前置校验、`Idle`/`Playing` 状态流转、流结束重拉、被动失去 `playWhenReady` 停止、短暂音频抑制看门狗启停与延迟超限重拉、连接期放宽阈值与播放期 `StuckPosition`、有效表面 `StuckRenderedFrame`、倍速追帧滞回恢复、重绑重试与鉴权停试 |
 
 ## 内部实现约定
 
