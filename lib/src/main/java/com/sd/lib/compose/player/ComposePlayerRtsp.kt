@@ -9,9 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
-import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
-import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -21,13 +19,12 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
+import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.video.VideoRendererEventListener
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import java.util.concurrent.atomic.AtomicBoolean
 
 /** 在 Compose 中记住并在退出组合时自动释放 [ComposePlayerRtsp] */
 @Composable
@@ -91,13 +88,10 @@ sealed interface ComposePlayerRtsp : ComposePlayerCore {
         playerProvider = { ctx ->
           newLivePlayer(
             context = ctx,
+            mediaSourceFactory = rtspSourceFactory,
             enableDecoderFallback = enableDecoderFallback,
             handleAudioFocus = handleAudioFocus,
           )
-        },
-        setMedia = { uri ->
-          val mediaSource = rtspSourceFactory.createMediaSource(MediaItem.fromUri(uri))
-          setMediaSource(mediaSource)
         },
       )
     }
@@ -121,15 +115,14 @@ internal class RtspPlayerImpl(
   private val stuckRenderedFrameInterval: Long,
   private val chaseLatency: Long,
   private val playerProvider: (Context) -> ExoPlayer,
-  private val setMedia: ExoPlayer.(String) -> Unit,
-) : ComposePlayerRtsp, PlayerEngineOwner {
+) : BaseComposePlayer(), ComposePlayerRtsp {
   private val _eventFlow = MutableSharedFlow<ComposePlayerRtspEvent>(
     extraBufferCapacity = 64,
     onBufferOverflow = BufferOverflow.DROP_OLDEST,
   )
 
   private var _isPlayingRequested = false
-  private val _startPlayWatchdogJob = AtomicBoolean()
+  private var _isWatchdogRunning = false
 
   private var _lastPosition = -1L
   private var _lastPositionChangeTime = 0L
@@ -140,7 +133,7 @@ internal class RtspPlayerImpl(
   /** 播放守护任务：负责卡死检查和追帧 */
   private val _playWatchdogJob = object : Runnable {
     override fun run() {
-      if (!_startPlayWatchdogJob.get()) return
+      if (!_isWatchdogRunning) return
 
       engine.exoPlayer?.also { player ->
         val now = SystemClock.elapsedRealtime()
@@ -160,8 +153,10 @@ internal class RtspPlayerImpl(
           }
         }
 
-        // 检查渲染帧数是否在增加
-        if (stuckRenderedFrameInterval > 0) {
+        // 检查渲染帧数是否在增加，仅在绑定有效渲染表面时检测
+        val surfaceSize = player.surfaceSize
+        val hasValidSurface = surfaceSize.width > 0 && surfaceSize.height > 0
+        if (stuckRenderedFrameInterval > 0 && hasValidSurface) {
           player.videoDecoderCounters?.also { counters ->
             val currentRenderedFrameCount = counters.renderedOutputBufferCount
             if (_lastRenderedFrameCount != currentRenderedFrameCount) {
@@ -175,6 +170,9 @@ internal class RtspPlayerImpl(
               }
             }
           }
+        } else {
+          _lastRenderedFrameCount = -1
+          _lastFrameRenderedTime = now
         }
 
         // 追帧逻辑
@@ -191,7 +189,7 @@ internal class RtspPlayerImpl(
         }
       }
 
-      if (_startPlayWatchdogJob.get()) {
+      if (_isWatchdogRunning) {
         val interval = if (chaseLatency > 0) (chaseLatency / 2).coerceAtLeast(100) else 1000L
         engine.handler.postDelayed(this, interval)
       }
@@ -205,31 +203,13 @@ internal class RtspPlayerImpl(
     callback = EngineCallback(),
   )
 
-  override val playerStateFlow: StateFlow<ComposePlayerState>
-    get() = engine.playerStateFlow
-
-  override val bufferStateFlow: StateFlow<ComposePlayerBufferState>
-    get() = engine.bufferStateFlow
-
-  override val exceptionFlow: StateFlow<ComposePlayerException?>
-    get() = engine.exceptionFlow
-
-  override val videoSizeFlow: StateFlow<Pair<Int, Int>?>
-    get() = engine.videoSizeFlow
-
-  override val isRenderedFirstFrameFlow: StateFlow<Boolean>
-    get() = engine.isRenderedFirstFrameFlow
-
-  override val isMutedFlow: StateFlow<Boolean>
-    get() = engine.isMutedFlow
-
   override val eventFlow: Flow<ComposePlayerRtspEvent> = _eventFlow.asSharedFlow()
 
   override fun setDataSource(uri: String) {
     if (engine.setDataSource(uri)) {
       stopPlayWatchdogJob()
       if (_isPlayingRequested) {
-        startPlayer()
+        engine.startPlayer()
       }
     }
   }
@@ -237,7 +217,7 @@ internal class RtspPlayerImpl(
   override fun play() {
     _isPlayingRequested = true
     engine.stopRetry()
-    startPlayer()
+    engine.startPlayer()
   }
 
   override fun stop() {
@@ -246,33 +226,16 @@ internal class RtspPlayerImpl(
     engine.stopPlayer()
   }
 
-  override fun getCurrentPosition(): Long {
-    return engine.getCurrentPosition()
-  }
-
-  override fun setMute(mute: Boolean) {
-    engine.setMute(mute)
-  }
-
   override fun release() {
     _isPlayingRequested = false
     stopPlayWatchdogJob()
     engine.release()
   }
 
-  private fun startPlayer() {
-    engine.prepare()?.also { player ->
-      if (player.playbackState == Player.STATE_ENDED) {
-        player.seekTo(0)
-      }
-      player.play()
-    }
-  }
-
   private fun restartPlay() {
     stopPlayWatchdogJob()
     engine.stopPlayer()
-    startPlayer()
+    engine.startPlayer()
   }
 
   /** 开始播放守护任务 */
@@ -284,7 +247,8 @@ internal class RtspPlayerImpl(
       return
     }
 
-    if (_startPlayWatchdogJob.compareAndSet(false, true)) {
+    if (!_isWatchdogRunning) {
+      _isWatchdogRunning = true
       _lastPosition = -1L
       _lastPositionChangeTime = SystemClock.elapsedRealtime()
 
@@ -298,7 +262,8 @@ internal class RtspPlayerImpl(
 
   /** 停止播放守护任务并恢复默认播放倍速 */
   private fun stopPlayWatchdogJob() {
-    if (_startPlayWatchdogJob.compareAndSet(true, false)) {
+    if (_isWatchdogRunning) {
+      _isWatchdogRunning = false
       engine.handler.removeCallbacks(_playWatchdogJob)
       engine.exoPlayer?.extSetSpeed(1.0f)
     }
@@ -307,10 +272,6 @@ internal class RtspPlayerImpl(
   private inner class EngineCallback : PlayerEngine.Callback {
     override fun createExoPlayer(context: Context): ExoPlayer {
       return playerProvider(context)
-    }
-
-    override fun bindMedia(player: ExoPlayer, uri: String) {
-      setMedia(player, uri)
     }
 
     override fun onIsPlayingChanged(player: ExoPlayer?, isPlaying: Boolean) {
@@ -341,14 +302,18 @@ internal class RtspPlayerImpl(
     }
 
     override fun onStateEnded(player: ExoPlayer) {
-      restartPlay()
+      if (_isPlayingRequested) {
+        restartPlay()
+      } else {
+        engine.stopPlayer()
+      }
     }
 
     override fun onPlayerError(error: PlaybackException) {
       val canRetry = !error.isAuthError() && _isPlayingRequested
       val scheduled = canRetry && engine.startRetry {
         if (_isPlayingRequested) {
-          startPlayer()
+          engine.startPlayer()
         }
       }
       if (!scheduled) {
@@ -363,6 +328,7 @@ internal class RtspPlayerImpl(
 @SuppressLint("UnsafeOptInUsageError")
 private fun newLivePlayer(
   context: Context,
+  mediaSourceFactory: MediaSource.Factory,
   enableDecoderFallback: Boolean,
   handleAudioFocus: Boolean,
 ): ExoPlayer {
@@ -396,13 +362,9 @@ private fun newLivePlayer(
     }
   }.setEnableDecoderFallback(enableDecoderFallback)
 
-  val audioAttributes = AudioAttributes.Builder()
-    .setUsage(C.USAGE_MEDIA)
-    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-    .build()
-
   return ExoPlayer.Builder(context, renderersFactory)
+    .setMediaSourceFactory(mediaSourceFactory)
     .setLoadControl(loadController)
-    .setAudioAttributes(audioAttributes, handleAudioFocus)
+    .setAudioAttributes(newMediaAudioAttributes(), handleAudioFocus)
     .build()
 }

@@ -7,6 +7,7 @@ import androidx.annotation.OptIn
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -25,8 +26,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -35,6 +36,35 @@ private const val HEX_DIGITS = "0123456789ABCDEF"
 /** 内部引擎持有者标记接口 */
 internal interface PlayerEngineOwner {
   val engine: PlayerEngine
+}
+
+/** 播放器内部公共基类，统一向 [PlayerEngine] 转发共用状态与控制操作 */
+internal abstract class BaseComposePlayer : ComposePlayerCore, PlayerEngineOwner {
+  override val playerStateFlow: StateFlow<ComposePlayerState>
+    get() = engine.playerStateFlow
+
+  override val bufferStateFlow: StateFlow<ComposePlayerBufferState>
+    get() = engine.bufferStateFlow
+
+  override val exceptionFlow: StateFlow<ComposePlayerException?>
+    get() = engine.exceptionFlow
+
+  override val videoSizeFlow: StateFlow<Pair<Int, Int>?>
+    get() = engine.videoSizeFlow
+
+  override val isRenderedFirstFrameFlow: StateFlow<Boolean>
+    get() = engine.isRenderedFirstFrameFlow
+
+  override val isMutedFlow: StateFlow<Boolean>
+    get() = engine.isMutedFlow
+
+  override fun getCurrentPosition(): Long {
+    return engine.getCurrentPosition()
+  }
+
+  override fun setMute(mute: Boolean) {
+    engine.setMute(mute)
+  }
 }
 
 /** 内部共享的 ExoPlayer 宿主引擎，由点播与直播播放器组合复用 */
@@ -66,6 +96,9 @@ internal class PlayerEngine(
   private var _dataSource: String? = null
   private var _isMediaBound = false
   private var _retryJob: Runnable? = null
+
+  val isMediaBound: Boolean
+    get() = _isMediaBound
 
   val playerStateFlow: StateFlow<ComposePlayerState> = _playerStateFlow.asStateFlow()
   val bufferStateFlow: StateFlow<ComposePlayerBufferState> = _bufferStateFlow.asStateFlow()
@@ -104,9 +137,14 @@ internal class PlayerEngine(
     if (player.playbackState == Player.STATE_IDLE) {
       if (!_isMediaBound || rebindMediaOnIdle) {
         runCatching {
-          encodeUserInfoIfNeed(dataSource)
-        }.onSuccess { uri ->
-          callback.bindMedia(player, uri)
+          val uri = encodeUserInfoIfNeed(dataSource)
+          val mediaItem = MediaItem.fromUri(uri)
+          val startPositionMs = callback.consumeStartPositionMs()
+          if (startPositionMs != C.TIME_UNSET) {
+            player.setMediaItem(mediaItem, startPositionMs)
+          } else {
+            player.setMediaItem(mediaItem)
+          }
           _isMediaBound = true
         }.onFailure { e ->
           setException(ComposePlayerException.DataSource(cause = e))
@@ -118,7 +156,17 @@ internal class PlayerEngine(
     return player
   }
 
-  /** 停止底层播放并清空当前异常与重试任务 */
+  /** 准备数据源并开始播放，若已处于播放结束状态则先回到起点 */
+  fun startPlayer() {
+    prepare()?.also { player ->
+      if (player.playbackState == Player.STATE_ENDED) {
+        player.seekTo(0)
+      }
+      player.play()
+    }
+  }
+
+  /** 停止底层播放并清空当前媒体项、异常与重试任务 */
   fun stopPlayer() {
     stopRetry()
     setException(null)
@@ -127,12 +175,16 @@ internal class PlayerEngine(
       if (player.playbackState != Player.STATE_IDLE) {
         player.stop()
       }
+      player.clearMediaItems()
     }
+    _bufferStateFlow.value = ComposePlayerBufferState.None
+    setPlayerState(ComposePlayerState.Idle)
     callback.onStopped()
     notifyPositionChanged()
   }
 
   fun getCurrentPosition(): Long {
+    if (!_isMediaBound) return 0L
     return (exoPlayer?.currentPosition ?: 0L).coerceAtLeast(0L)
   }
 
@@ -197,31 +249,24 @@ internal class PlayerEngine(
   fun observePosition(interval: Duration): Flow<Long> {
     val safeInterval = if (interval.isPositive()) interval else 200.milliseconds
     return channelFlow {
-      suspend fun sendPosition() {
-        val position = withContext(Dispatchers.Main.immediate) {
-          getCurrentPosition()
-        }
-        send(position)
-      }
-
       launch {
         _positionChangedFlow.collect {
-          sendPosition()
+          send(getCurrentPosition())
         }
       }
 
       launch {
         playerStateFlow.collectLatest { state ->
-          sendPosition()
+          send(getCurrentPosition())
           if (state == ComposePlayerState.Playing) {
             while (true) {
               delay(safeInterval)
-              sendPosition()
+              send(getCurrentPosition())
             }
           }
         }
       }
-    }.distinctUntilChanged()
+    }.flowOn(Dispatchers.Main.immediate).distinctUntilChanged()
   }
 
   override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -295,13 +340,15 @@ internal class PlayerEngine(
   }
 
   override fun onPlayerError(error: PlaybackException) {
-    callback.onPlayerError(error)
     setException(error.toComposePlayerException())
+    callback.onPlayerError(error)
   }
 
   interface Callback {
     fun createExoPlayer(context: Context): ExoPlayer
-    fun bindMedia(player: ExoPlayer, uri: String)
+    fun consumeStartPositionMs(): Long {
+      return C.TIME_UNSET
+    }
     fun onPlayerCreated(player: ExoPlayer) {}
     fun onStopped() {}
     fun onIsPlayingChanged(player: ExoPlayer?, isPlaying: Boolean)
@@ -329,10 +376,17 @@ internal fun encodeUserInfoIfNeed(uri: String): String {
   val firstSegment = uri.substring(userInfoStart, authorityEnd)
 
   val atIndex = if ('@' in firstSegment) {
-    uri.lastIndexOf('@', startIndex = authorityEnd - 1)
+    val firstAtIndex = uri.lastIndexOf('@', startIndex = authorityEnd - 1)
+    val candidateHostPort = uri.substring(firstAtIndex + 1, authorityEnd)
+    if (isLikelyCompleteHostPort(candidateHostPort)) {
+      firstAtIndex
+    } else {
+      val trailingAtIndex = findTruncatedUserInfoAtIndex(uri, startIndex = authorityEnd)
+      if (trailingAtIndex >= 0) trailingAtIndex else firstAtIndex
+    }
   } else {
     if (!looksLikeTruncatedUserInfo(firstSegment)) return uri
-    findHostAtIndex(uri, startIndex = authorityEnd)
+    findTruncatedUserInfoAtIndex(uri, startIndex = authorityEnd)
   }
   if (atIndex <= userInfoStart) return uri
 
@@ -357,31 +411,41 @@ internal fun encodeUserInfoIfNeed(uri: String): String {
   }
 }
 
-/** 判断被 `/`、`?`、`#` 截断的首段是否为未编码的 `user:password` 前缀（而非合法 `host:port`） */
+/** 判断被 `/`、`?`、`#` 截断的首段是否为未编码的 `user:password` 前缀（而非完整 `host:port`） */
 private fun looksLikeTruncatedUserInfo(segment: String): Boolean {
   if (segment.isEmpty() || segment.startsWith("[")) return false
   val colonIndex = segment.indexOf(':')
   if (colonIndex <= 0) return false
-  val afterColon = segment.substring(colonIndex + 1)
-  return !isValidPort(afterColon)
+  return !isLikelyCompleteHostPort(segment)
 }
 
-/** 从指定偏移后逆向查找紧跟合法 `host[:port]` 的 `@` 分隔符下标 */
-private fun findHostAtIndex(uri: String, startIndex: Int): Int {
+/** 从截断偏移后逆向查找紧跟合法 `host[:port]` 的 `@` 分隔符下标，排除含参数赋值或嵌套协议的普通 URL */
+private fun findTruncatedUserInfoAtIndex(uri: String, startIndex: Int): Int {
   var searchFrom = uri.length - 1
   while (searchFrom >= startIndex) {
     val atIndex = uri.lastIndexOf('@', startIndex = searchFrom)
     if (atIndex < startIndex) return -1
 
-    val hostEnd = uri.indexOfAny(charArrayOf('/', '?', '#'), startIndex = atIndex + 1)
-      .let { if (it < 0) uri.length else it }
-    val hostPort = uri.substring(atIndex + 1, hostEnd)
-    if (isValidHostPort(hostPort)) {
-      return atIndex
+    val middle = uri.substring(startIndex, atIndex)
+    if ("=" !in middle && "://" !in middle) {
+      val hostEnd = uri.indexOfAny(charArrayOf('/', '?', '#'), startIndex = atIndex + 1)
+        .let { if (it < 0) uri.length else it }
+      val hostPort = uri.substring(atIndex + 1, hostEnd)
+      if (isValidHostPort(hostPort)) {
+        return atIndex
+      }
     }
     searchFrom = atIndex - 1
   }
   return -1
+}
+
+/** 判断 URI 片段是否为完整的主机（含域名点号、`localhost` 或 IPv6 字面量）及可选端口 */
+private fun isLikelyCompleteHostPort(hostPort: String): Boolean {
+  if (!isValidHostPort(hostPort)) return false
+  if (hostPort.startsWith("[")) return true
+  val host = hostPort.substringBefore(':')
+  return '.' in host || host.equals("localhost", ignoreCase = true)
 }
 
 private fun isValidHostPort(hostPort: String): Boolean {
@@ -390,8 +454,7 @@ private fun isValidHostPort(hostPort: String): Boolean {
     val closeBracket = hostPort.indexOf(']')
     if (closeBracket <= 1) return false
     if (closeBracket == hostPort.length - 1) return true
-    if (hostPort[closeBracket + 1] != ':') return false
-    return isValidPort(hostPort.substring(closeBracket + 2))
+    return hostPort[closeBracket + 1] == ':' && isValidPort(hostPort.substring(closeBracket + 2))
   }
 
   val colonIndex = hostPort.indexOf(':')

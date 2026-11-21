@@ -40,6 +40,22 @@ class UriUserInfoEncodeTest {
   }
 
   @Test
+  fun encodesNumericPrefixAndAtBeforeDelimiterInPassword() {
+    assertEquals(
+      "rtsp://admin:2024%23abc@192.168.1.100:554/live",
+      encodeUserInfoIfNeed("rtsp://admin:2024#abc@192.168.1.100:554/live"),
+    )
+    assertEquals(
+      "rtsp://admin:1234%2Fabc@192.168.1.100:554/live",
+      encodeUserInfoIfNeed("rtsp://admin:1234/abc@192.168.1.100:554/live"),
+    )
+    assertEquals(
+      "rtsp://admin:p%40ss%23123@192.168.1.100:554/live",
+      encodeUserInfoIfNeed("rtsp://admin:p@ss#123@192.168.1.100:554/live"),
+    )
+  }
+
+  @Test
   fun idempotentForAlreadyEncodedCredentialsAndEncodedColonInUsername() {
     val alreadyEncoded = "rtsp://domain%3Aadmin:p%40ss%23123@192.168.1.100:554/live"
     assertEquals(alreadyEncoded, encodeUserInfoIfNeed(alreadyEncoded))
@@ -60,6 +76,18 @@ class UriUserInfoEncodeTest {
 
     val httpWithPortAndQueryAt = "https://example.com:8080/play?token=abc:def@123"
     assertEquals(httpWithPortAndQueryAt, encodeUserInfoIfNeed(httpWithPortAndQueryAt))
+
+    val localhostWithEmailInPath = "http://localhost:8080/users/test@domain.com/video.mp4"
+    assertEquals(localhostWithEmailInPath, encodeUserInfoIfNeed(localhostWithEmailInPath))
+
+    val intranetQueryWithEmail = "http://intranet:8080/play?mail=test@domain.com"
+    assertEquals(intranetQueryWithEmail, encodeUserInfoIfNeed(intranetQueryWithEmail))
+
+    val credentialsAndEmailInPath = "https://admin:p@ss@example.com/users/test@domain.com/video.mp4"
+    assertEquals(
+      "https://admin:p%40ss@example.com/users/test@domain.com/video.mp4",
+      encodeUserInfoIfNeed(credentialsAndEmailInPath),
+    )
 
     val localFileWithAt = "file:///storage/emulated/0/dir@name/demo.mp4"
     assertEquals(localFileWithAt, encodeUserInfoIfNeed(localFileWithAt))

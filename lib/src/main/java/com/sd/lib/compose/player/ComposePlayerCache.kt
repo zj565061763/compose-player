@@ -46,13 +46,15 @@ class ComposePlayerCache private constructor(
       require(maxBytes > 0) { "maxBytes must be > 0" }
       val appContext = context.applicationContext
       val key = runCatching { directory.canonicalPath }.getOrElse { directory.absolutePath }
-      return sCacheMap.getOrPut(key) {
-        val simpleCache = SimpleCache(
-          directory,
-          LeastRecentlyUsedCacheEvictor(maxBytes),
-          StandaloneDatabaseProvider(appContext),
-        )
-        ComposePlayerCache(simpleCache)
+      return sCacheMap[key] ?: synchronized(sCacheMap) {
+        sCacheMap.getOrPut(key) {
+          val simpleCache = SimpleCache(
+            directory,
+            LeastRecentlyUsedCacheEvictor(maxBytes),
+            StandaloneDatabaseProvider(appContext),
+          )
+          ComposePlayerCache(simpleCache)
+        }
       }
     }
   }

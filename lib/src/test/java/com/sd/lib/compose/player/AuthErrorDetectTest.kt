@@ -32,6 +32,9 @@ class AuthErrorDetectTest {
     )
     assertTrue(missingHeader.isAuthError())
 
+    val nullMessageParserError = ParserException.createForMalformedManifest(null, null)
+    assertFalse(nullMessageParserError.isAuthError())
+
     val channelUrlTimeout = RtspMediaSource.RtspPlaybackException(
       ConnectException("Failed to connect to rtsp://192.168.1.100:8401/Streaming/Channels/401"),
     )

@@ -60,7 +60,8 @@ fun ComposePlayerException.desc(context: Context): String {
     is ComposePlayerException.Playback -> {
       buildString {
         append("(").append(errorCode).append(")")
-        cause?.also { append(it) }
+        val detail = cause?.toString() ?: errorCodeName
+        if (detail.isNotEmpty()) append(detail)
       }
     }
   }
@@ -100,7 +101,8 @@ internal fun Throwable?.isAuthError(): Boolean {
         }
       }
       is ParserException -> {
-        if (PARSER_AUTH_RESPONSE_REGEX.containsMatchIn(current.message)) {
+        val msg = (current as Throwable).message
+        if (msg != null && PARSER_AUTH_RESPONSE_REGEX.containsMatchIn(msg)) {
           return true
         }
       }

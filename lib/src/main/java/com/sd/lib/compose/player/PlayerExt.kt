@@ -1,7 +1,16 @@
 package com.sd.lib.compose.player
 
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
+
+/** 创建媒体播放默认音频属性 */
+internal fun newMediaAudioAttributes(): AudioAttributes {
+  return AudioAttributes.Builder()
+    .setUsage(C.USAGE_MEDIA)
+    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+    .build()
+}
 
 /** 设置静音 */
 internal fun Player.extSetMute(mute: Boolean) {

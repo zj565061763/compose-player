@@ -7,9 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
-import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
-import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -120,14 +118,9 @@ sealed interface ComposePlayer : ComposePlayerCore {
           }
 
           val dataSourceFactory = DefaultDataSource.Factory(ctx, baseDataSourceFactory)
-          val audioAttributes = AudioAttributes.Builder()
-            .setUsage(C.USAGE_MEDIA)
-            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-            .build()
-
           ExoPlayer.Builder(ctx, renderersFactory)
             .setMediaSourceFactory(DefaultMediaSourceFactory(ctx).setDataSourceFactory(dataSourceFactory))
-            .setAudioAttributes(audioAttributes, handleAudioFocus)
+            .setAudioAttributes(newMediaAudioAttributes(), handleAudioFocus)
             .setHandleAudioBecomingNoisy(handleAudioBecomingNoisy)
             .build()
         },
@@ -151,7 +144,7 @@ internal class VodPlayerImpl(
   context: Context,
   retryOnErrorInterval: Long,
   private val playerProvider: (Context) -> ExoPlayer,
-) : ComposePlayer, PlayerEngineOwner {
+) : BaseComposePlayer(), ComposePlayer {
   private val _durationFlow = MutableStateFlow<Long?>(null)
   private val _speedFlow = MutableStateFlow(1.0f)
   private val _isLoopingFlow = MutableStateFlow(false)
@@ -165,24 +158,6 @@ internal class VodPlayerImpl(
     rebindMediaOnIdle = false,
     callback = EngineCallback(),
   )
-
-  override val playerStateFlow: StateFlow<ComposePlayerState>
-    get() = engine.playerStateFlow
-
-  override val bufferStateFlow: StateFlow<ComposePlayerBufferState>
-    get() = engine.bufferStateFlow
-
-  override val exceptionFlow: StateFlow<ComposePlayerException?>
-    get() = engine.exceptionFlow
-
-  override val videoSizeFlow: StateFlow<Pair<Int, Int>?>
-    get() = engine.videoSizeFlow
-
-  override val isRenderedFirstFrameFlow: StateFlow<Boolean>
-    get() = engine.isRenderedFirstFrameFlow
-
-  override val isMutedFlow: StateFlow<Boolean>
-    get() = engine.isMutedFlow
 
   override val durationFlow: StateFlow<Long?> = _durationFlow.asStateFlow()
   override val speedFlow: StateFlow<Float> = _speedFlow.asStateFlow()
@@ -213,8 +188,12 @@ internal class VodPlayerImpl(
   }
 
   override fun seekTo(positionMs: Long) {
+    if (_requireState == ComposePlayerState.Ended) {
+      _requireState = ComposePlayerState.Paused
+    }
+
     val player = engine.exoPlayer
-    if (player == null) {
+    if (player == null || !engine.isMediaBound) {
       _seekToPositionMs = positionMs
       return
     }
@@ -231,17 +210,9 @@ internal class VodPlayerImpl(
     engine.notifyPositionChanged()
   }
 
-  override fun getCurrentPosition(): Long {
-    return engine.getCurrentPosition()
-  }
-
   override fun getDuration(): Long? {
     val duration = engine.exoPlayer?.duration ?: return null
     return if (duration == C.TIME_UNSET) null else duration.takeIf { it > 0 }
-  }
-
-  override fun setMute(mute: Boolean) {
-    engine.setMute(mute)
   }
 
   override fun setSpeed(speed: Float) {
@@ -268,19 +239,10 @@ internal class VodPlayerImpl(
   private fun syncPlayer() {
     when (_requireState) {
       ComposePlayerState.Idle -> engine.stopPlayer()
-      ComposePlayerState.Playing -> startPlayer()
+      ComposePlayerState.Playing -> engine.startPlayer()
       ComposePlayerState.Paused -> pausePlayer()
       ComposePlayerState.Ended -> {}
       null -> {}
-    }
-  }
-
-  private fun startPlayer() {
-    engine.prepare()?.also { player ->
-      if (player.playbackState == Player.STATE_ENDED) {
-        player.seekTo(0)
-      }
-      player.play()
     }
   }
 
@@ -306,8 +268,10 @@ internal class VodPlayerImpl(
       return playerProvider(context)
     }
 
-    override fun bindMedia(player: ExoPlayer, uri: String) {
-      player.setMediaItem(MediaItem.fromUri(uri))
+    override fun consumeStartPositionMs(): Long {
+      val positionMs = _seekToPositionMs ?: return C.TIME_UNSET
+      _seekToPositionMs = null
+      return positionMs.coerceAtLeast(0L)
     }
 
     override fun onPlayerCreated(player: ExoPlayer) {
@@ -334,6 +298,9 @@ internal class VodPlayerImpl(
     override fun onPlayWhenReadyLost() {
       if (_requireState == ComposePlayerState.Playing) {
         _requireState = ComposePlayerState.Paused
+        if (engine.playerStateFlow.value == ComposePlayerState.Playing) {
+          engine.setPlayerState(ComposePlayerState.Paused)
+        }
       }
     }
 
@@ -348,6 +315,7 @@ internal class VodPlayerImpl(
     }
 
     override fun onStateEnded(player: ExoPlayer) {
+      player.pause()
       _requireState = ComposePlayerState.Ended
       engine.setPlayerState(ComposePlayerState.Ended)
     }
@@ -362,7 +330,7 @@ internal class VodPlayerImpl(
         && (requireState == ComposePlayerState.Playing || requireState == ComposePlayerState.Paused)
       val scheduled = canRetry && engine.startRetry {
         when (requireState) {
-          ComposePlayerState.Playing -> startPlayer()
+          ComposePlayerState.Playing -> engine.startPlayer()
           ComposePlayerState.Paused -> pausePlayer()
           else -> {}
         }
