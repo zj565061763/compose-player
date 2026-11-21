@@ -1,6 +1,8 @@
 package com.sd.lib.compose.player
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UriUserInfoEncodeTest {
@@ -118,5 +120,27 @@ class UriUserInfoEncodeTest {
 
     val localFileWithAt = "file:///storage/emulated/0/dir@name/demo.mp4"
     assertEquals(localFileWithAt, encodeUserInfoIfNeed(localFileWithAt))
+  }
+
+  @Test
+  fun validatesRtspUrisAccurately() {
+    assertTrue(isValidRtspUri(encodeUserInfoIfNeed("rtsp://192.168.1.100:554/Streaming/Channels/101")))
+    assertTrue(isValidRtspUri(encodeUserInfoIfNeed("rtspt://camera_01.local/live")))
+    assertTrue(isValidRtspUri(encodeUserInfoIfNeed("RTSP://[::1]:8554/live")))
+    assertTrue(isValidRtspUri(encodeUserInfoIfNeed("rtsp://admin:p@ss#123@192.168.1.100:554/live")))
+
+    assertFalse(isValidRtspUri(""))
+    assertFalse(isValidRtspUri("192.168.1.100:554/live"))
+    assertFalse(isValidRtspUri("rtsp://"))
+    assertFalse(isValidRtspUri("rtsp:///live"))
+    assertFalse(isValidRtspUri("rtsp://admin:123@"))
+    assertFalse(isValidRtspUri("rtsp://admin:123@/live"))
+    assertFalse(isValidRtspUri("rtsp://@192.168.1.100/live"))
+    assertFalse(isValidRtspUri("http://192.168.1.100:554/live"))
+    assertFalse(isValidRtspUri("android.resource:/213123456"))
+    assertFalse(isValidRtspUri("rtsp://192.168.1.100:0/live"))
+    assertFalse(isValidRtspUri("rtsp://192.168.1.100:70000/live"))
+    assertFalse(isValidRtspUri("rtsp://192.168.1.100:abc/live"))
+    assertFalse(isValidRtspUri("rtsp://192.168.1.100/live stream"))
   }
 }

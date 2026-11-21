@@ -46,7 +46,7 @@ fun ComposePlayerView(
   ) {
     if (LocalInspectionMode.current) return@Box
 
-    val exoPlayer = (player as? BaseComposePlayer)?.engine?.exoPlayer
+    val exoPlayer = (player as? BaseComposePlayer)?.exoPlayer
     val presentationState = rememberPresentationState(exoPlayer)
 
     key(rebindKeyProvider()) {

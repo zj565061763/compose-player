@@ -33,8 +33,8 @@ android {
 
 dependencies {
   val composeBom = platform(libs.androidx.compose.bom)
-  implementation(composeBom)
-  implementation(libs.androidx.compose.foundation)
+  api(composeBom)
+  api(libs.androidx.compose.foundation)
   implementation(libs.androidx.lifecycle.runtimeCompose)
   implementation(libs.androidx.media3.common)
   implementation(libs.androidx.media3.datasource)

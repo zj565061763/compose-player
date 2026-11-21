@@ -1,8 +1,5 @@
 package com.sd.lib.compose.player
 
-import android.content.ContentResolver
-import android.net.Uri
-import androidx.annotation.RawRes
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -90,15 +87,6 @@ suspend fun ComposePlayerCore.awaitRenderedFirstFrame() {
   isRenderedFirstFrameFlow.first { it }
 }
 
-/** 设置 Raw 资源数据源 */
-fun ComposePlayerCore.setDataSource(@RawRes resId: Int) {
-  val uri = Uri.Builder()
-    .scheme(ContentResolver.SCHEME_ANDROID_RESOURCE)
-    .path(resId.toString())
-    .build()
-  setDataSource(uri.toString())
-}
-
 /**
  * 按[interval]采样当前播放进度（毫秒），仅在播放中定时轮询，状态切换或跳转时立即发射
  *
@@ -107,5 +95,5 @@ fun ComposePlayerCore.setDataSource(@RawRes resId: Int) {
 fun ComposePlayerCore.positionFlow(
   interval: Duration = 200.milliseconds,
 ): Flow<Long> {
-  return (this as BaseComposePlayer).engine.observePosition(interval)
+  return (this as BaseComposePlayer).observePosition(interval)
 }

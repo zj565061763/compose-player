@@ -21,7 +21,9 @@ sealed class ComposePlayerException(
   ) : ComposePlayerException(cause = cause)
 
   /** 授权失败 */
-  class Auth internal constructor() : ComposePlayerException()
+  class Auth internal constructor(
+    cause: Throwable? = null,
+  ) : ComposePlayerException(cause = cause)
 
   /**
    * 播放异常
@@ -70,7 +72,7 @@ fun ComposePlayerException.desc(context: Context): String {
 /** 将底层[PlaybackException]包装为[ComposePlayerException] */
 internal fun PlaybackException.toComposePlayerException(): ComposePlayerException {
   return when {
-    isAuthError() -> ComposePlayerException.Auth()
+    isAuthError() -> ComposePlayerException.Auth(cause = cause)
     else -> ComposePlayerException.Playback(
       errorCode = errorCode,
       errorCodeName = errorCodeName,

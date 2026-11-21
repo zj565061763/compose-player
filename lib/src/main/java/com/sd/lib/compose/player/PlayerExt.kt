@@ -14,10 +14,10 @@ internal fun newMediaAudioAttributes(): AudioAttributes {
 
 /** 设置静音 */
 internal fun Player.extSetMute(mute: Boolean) {
-  trackSelectionParameters = trackSelectionParameters
-    .buildUpon()
-    .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, mute)
-    .build()
+  val targetVolume = if (mute) 0f else 1f
+  if (volume != targetVolume) {
+    volume = targetVolume
+  }
 }
 
 /** 设置倍速 */
