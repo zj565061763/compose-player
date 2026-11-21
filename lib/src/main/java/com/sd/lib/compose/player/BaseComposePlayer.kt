@@ -1,8 +1,6 @@
 package com.sd.lib.compose.player
 
 import android.content.Context
-import android.os.Handler
-import android.os.Looper
 import androidx.annotation.OptIn
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -11,11 +9,14 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.common.Timeline
-import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -23,15 +24,17 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.channelFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.launch
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
 /** 播放器内部公共基类，统一管理底层 ExoPlayer 生命周期、共用状态流、进度采样与错误重试 */
+@kotlin.OptIn(ExperimentalCoroutinesApi::class)
 @OptIn(UnstableApi::class)
 internal abstract class BaseComposePlayer(
   private val context: Context,
@@ -41,7 +44,7 @@ internal abstract class BaseComposePlayer(
   var exoPlayer by mutableStateOf<ExoPlayer?>(null)
     private set
 
-  protected val mainHandler: Handler = Handler(Looper.getMainLooper())
+  protected val mainScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
   private val _playerStateFlow = MutableStateFlow(ComposePlayerState.Idle)
   private val _bufferStateFlow = MutableStateFlow(ComposePlayerBufferState.None)
@@ -58,7 +61,13 @@ internal abstract class BaseComposePlayer(
 
   private var _dataSource: String? = null
   private var _isMediaBound = false
-  private var _retryJob: Runnable? = null
+  private var _pendingSeekToDefaultPosition = false
+  private var _retryJob: Job? = null
+
+  protected var pendingStartPositionMs: Long = C.TIME_UNSET
+
+  protected val hasDataSource: Boolean
+    get() = _dataSource != null
 
   protected val isMediaBound: Boolean
     get() = _isMediaBound
@@ -71,11 +80,6 @@ internal abstract class BaseComposePlayer(
   override val isMutedFlow: StateFlow<Boolean> = _isMutedFlow.asStateFlow()
 
   private val _playerListener = object : Player.Listener {
-    override fun onIsPlayingChanged(isPlaying: Boolean) {
-      handleIsPlayingChanged(exoPlayer, isPlaying)
-      notifyPositionChanged()
-    }
-
     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
       if (!playWhenReady
         && reason != Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST
@@ -85,77 +89,70 @@ internal abstract class BaseComposePlayer(
       }
     }
 
-    override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
-      exoPlayer?.also { handlePlaybackSuppressionReasonChanged(it, playbackSuppressionReason) }
-    }
+    override fun onEvents(rawPlayer: Player, events: Player.Events) {
+      val player = exoPlayer ?: return
+      if (player !== rawPlayer) return
 
-    override fun onPlaybackStateChanged(playbackState: Int) {
-      _bufferStateFlow.value = when (playbackState) {
-        Player.STATE_BUFFERING -> ComposePlayerBufferState.Buffering
-        Player.STATE_READY -> ComposePlayerBufferState.Ready
-        else -> ComposePlayerBufferState.None
-      }
-
-      when (playbackState) {
-        Player.STATE_IDLE -> {
-          resetIdleStates()
+      if (events.contains(Player.EVENT_PLAYER_ERROR)) {
+        player.playerError?.also { error ->
+          if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
+            _pendingSeekToDefaultPosition = true
+          }
+          syncStates(player, events)
+          val exception = error.toComposePlayerException()
+          setException(exception)
+          handlePlayerError(exception)
+          notifyPositionChanged()
+          return
         }
-        Player.STATE_READY -> {
-          stopRetry()
-          setException(null)
-          exoPlayer?.also { onStateReady(it) }
+      }
+
+      if (events.contains(Player.EVENT_PLAYBACK_SUPPRESSION_REASON_CHANGED)) {
+        if (onPlaybackSuppressionChanged(player, player.playbackSuppressionReason)) {
+          return
         }
-        Player.STATE_ENDED -> {
-          exoPlayer?.also { onStateEnded(it) }
+      }
+
+      if (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED)) {
+        when (player.playbackState) {
+          Player.STATE_READY -> {
+            stopRetry()
+            setException(null)
+            if (!onStateReady(player)) return
+          }
+          Player.STATE_ENDED -> {
+            if (!onStateEnded(player)) return
+          }
+          else -> {}
         }
-        else -> {}
       }
-      notifyPositionChanged()
-    }
 
-    override fun onPositionDiscontinuity(
-      oldPosition: Player.PositionInfo,
-      newPosition: Player.PositionInfo,
-      reason: Int,
-    ) {
-      notifyPositionChanged()
-    }
-
-    override fun onTimelineChanged(timeline: Timeline, reason: Int) {
-      exoPlayer?.also { onTimelineOrMediaChanged(it) }
-    }
-
-    override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-      exoPlayer?.also { onTimelineOrMediaChanged(it) }
-    }
-
-    override fun onVideoSizeChanged(videoSize: VideoSize) {
-      _videoSizeFlow.value = if (videoSize.width > 0 && videoSize.height > 0) {
-        Pair(videoSize.width, videoSize.height)
-      } else {
-        null
-      }
-    }
-
-    override fun onRenderedFirstFrame() {
-      _isRenderedFirstFrameFlow.value = true
-    }
-
-    override fun onPlayerError(error: PlaybackException) {
-      if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
-        exoPlayer?.seekToDefaultPosition()
-      }
-      val exception = error.toComposePlayerException()
-      setException(exception)
-      handlePlayerError(exception)
+      syncStates(player, events)
     }
   }
 
   override fun getCurrentPosition(): Long {
     if (!_isMediaBound) {
-      return getPendingPositionMs() ?: 0L
+      return if (pendingStartPositionMs != C.TIME_UNSET) pendingStartPositionMs else 0L
     }
     return (exoPlayer?.currentPosition ?: 0L).coerceAtLeast(0L)
+  }
+
+  override fun positionFlow(interval: Duration): Flow<Long> {
+    val safeInterval = if (interval.isPositive()) interval else 200.milliseconds
+    val statePositionFlow = playerStateFlow.transformLatest { state ->
+      emit(getCurrentPosition())
+      if (state == ComposePlayerState.Playing) {
+        while (true) {
+          delay(safeInterval)
+          emit(getCurrentPosition())
+        }
+      }
+    }
+    val changedPositionFlow = _positionChangedFlow.map { getCurrentPosition() }
+    return merge(changedPositionFlow, statePositionFlow)
+      .flowOn(Dispatchers.Main.immediate)
+      .distinctUntilChanged()
   }
 
   override fun setMute(mute: Boolean) {
@@ -216,20 +213,27 @@ internal abstract class BaseComposePlayer(
     if (encodedUri != null) {
       runCatching {
         val mediaItem = MediaItem.fromUri(encodedUri)
-        val startPositionMs = consumeStartPositionMs()
+        val startPositionMs = pendingStartPositionMs
         if (startPositionMs != C.TIME_UNSET) {
           player.setMediaItem(mediaItem, startPositionMs)
         } else {
           player.setMediaItem(mediaItem)
         }
+        pendingStartPositionMs = C.TIME_UNSET
+        _pendingSeekToDefaultPosition = false
         _isMediaBound = true
+        _isRenderedFirstFrameFlow.value = false
       }.onFailure { e ->
         val exception = ComposePlayerException.DataSource(cause = e)
         setException(exception)
         handlePlayerError(exception)
         return null
       }
+    } else if (_pendingSeekToDefaultPosition) {
+      _pendingSeekToDefaultPosition = false
+      player.seekToDefaultPosition()
     }
+
     player.prepare()
     return player
   }
@@ -252,14 +256,15 @@ internal abstract class BaseComposePlayer(
     stopRetry()
     setException(null)
     _isMediaBound = false
+    _pendingSeekToDefaultPosition = false
+    pendingStartPositionMs = C.TIME_UNSET
     exoPlayer?.also { player ->
       if (player.playbackState != Player.STATE_IDLE) {
         player.stop()
       }
       player.clearMediaItems()
     }
-    resetIdleStates()
-    onStopped()
+    syncStates(null, null)
     notifyPositionChanged()
   }
 
@@ -273,10 +278,12 @@ internal abstract class BaseComposePlayer(
       player.release()
     }
     _dataSource = null
+    mainScope.coroutineContext.cancelChildren()
   }
 
-  protected fun setPlayerState(state: ComposePlayerState) {
-    _playerStateFlow.value = state
+  /** 按当前播放器快照重新计算并同步输出状态 */
+  protected fun syncPlayerState() {
+    syncStates(exoPlayer, null)
   }
 
   protected fun setException(error: ComposePlayerException?) {
@@ -290,10 +297,11 @@ internal abstract class BaseComposePlayer(
   /** 调度延迟错误重试，配置未启用时返回 false */
   protected fun startRetry(action: () -> Unit): Boolean {
     if (retryOnErrorInterval <= 0) return false
-    Runnable { action() }.also { job ->
-      stopRetry()
-      _retryJob = job
-      mainHandler.postDelayed(job, retryOnErrorInterval)
+    stopRetry()
+    _retryJob = mainScope.launch {
+      delay(retryOnErrorInterval.milliseconds)
+      _retryJob = null
+      action()
     }
     return true
   }
@@ -301,59 +309,73 @@ internal abstract class BaseComposePlayer(
   protected fun stopRetry() {
     _retryJob?.also { job ->
       _retryJob = null
-      mainHandler.removeCallbacks(job)
+      job.cancel()
     }
   }
 
-  /** 构建按需采样的播放进度冷流 */
-  internal fun observePosition(interval: Duration): Flow<Long> {
-    val safeInterval = if (interval.isPositive()) interval else 200.milliseconds
-    return channelFlow {
-      launch {
-        _positionChangedFlow.collect {
-          send(getCurrentPosition())
-        }
-      }
+  /** 同步缓冲态、视频尺寸、首帧标记与播放态 */
+  private fun syncStates(
+    player: ExoPlayer?,
+    events: Player.Events?,
+  ) {
+    val boundPlayer = if (_isMediaBound) player else null
+    val playbackState = boundPlayer?.playbackState ?: Player.STATE_IDLE
 
-      launch {
-        playerStateFlow.collectLatest { state ->
-          send(getCurrentPosition())
-          if (state == ComposePlayerState.Playing) {
-            while (true) {
-              delay(safeInterval)
-              send(getCurrentPosition())
-            }
-          }
-        }
-      }
-    }.flowOn(Dispatchers.Main.immediate).distinctUntilChanged()
-  }
+    _bufferStateFlow.value = when (playbackState) {
+      Player.STATE_BUFFERING -> ComposePlayerBufferState.Buffering
+      Player.STATE_READY -> ComposePlayerBufferState.Ready
+      else -> ComposePlayerBufferState.None
+    }
 
-  /** 重置为空闲状态并清空当前媒体的尺寸、首帧与缓冲状态 */
-  private fun resetIdleStates() {
-    _bufferStateFlow.value = ComposePlayerBufferState.None
-    setPlayerState(ComposePlayerState.Idle)
-    _videoSizeFlow.value = null
-    _isRenderedFirstFrameFlow.value = false
-    onStateIdle()
+    if (playbackState == Player.STATE_IDLE) {
+      _videoSizeFlow.value = null
+      _isRenderedFirstFrameFlow.value = false
+    } else if (boundPlayer != null) {
+      val videoSize = boundPlayer.videoSize
+      _videoSizeFlow.value = if (videoSize.width > 0 && videoSize.height > 0) {
+        Pair(videoSize.width, videoSize.height)
+      } else {
+        null
+      }
+      if (events?.contains(Player.EVENT_RENDERED_FIRST_FRAME) == true) {
+        _isRenderedFirstFrameFlow.value = true
+      }
+    }
+
+    val previousState = _playerStateFlow.value
+    val newState = computePlayerState(boundPlayer, previousState)
+    _playerStateFlow.value = newState
+    onStateSynced(boundPlayer, previousState, newState)
+
+    if (previousState != newState
+      || events?.containsAny(
+        Player.EVENT_PLAYBACK_STATE_CHANGED,
+        Player.EVENT_IS_PLAYING_CHANGED,
+        Player.EVENT_POSITION_DISCONTINUITY,
+      ) == true
+    ) {
+      notifyPositionChanged()
+    }
   }
 
   protected abstract fun createExoPlayer(context: Context): ExoPlayer
-  protected open fun validateEncodedUri(encodedUri: String) {}
-  protected open fun getPendingPositionMs(): Long? {
-    return null
-  }
-  protected open fun consumeStartPositionMs(): Long {
-    return C.TIME_UNSET
-  }
-  protected open fun onPlayerCreated(player: ExoPlayer) {}
-  protected open fun onStopped() {}
-  protected abstract fun handleIsPlayingChanged(player: ExoPlayer?, isPlaying: Boolean)
-  protected open fun onPlayWhenReadyLost() {}
-  protected open fun handlePlaybackSuppressionReasonChanged(player: ExoPlayer, reason: Int) {}
-  protected open fun onStateIdle() {}
-  protected open fun onStateReady(player: ExoPlayer) {}
-  protected abstract fun onStateEnded(player: ExoPlayer)
-  protected open fun onTimelineOrMediaChanged(player: ExoPlayer) {}
+  protected abstract fun computePlayerState(
+    player: ExoPlayer?,
+    currentState: ComposePlayerState,
+  ): ComposePlayerState
+  protected abstract fun onStateReady(player: ExoPlayer): Boolean
+  protected abstract fun onStateEnded(player: ExoPlayer): Boolean
   protected abstract fun handlePlayerError(error: ComposePlayerException)
+
+  protected open fun validateEncodedUri(encodedUri: String) {}
+  protected open fun onPlayerCreated(player: ExoPlayer) {}
+  protected open fun onPlayWhenReadyLost() {}
+  protected open fun onPlaybackSuppressionChanged(player: ExoPlayer, reason: Int): Boolean {
+    return false
+  }
+  protected open fun onStateSynced(
+    player: ExoPlayer?,
+    previousState: ComposePlayerState,
+    newState: ComposePlayerState,
+  ) {}
 }

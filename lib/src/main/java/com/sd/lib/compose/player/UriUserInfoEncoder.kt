@@ -2,7 +2,7 @@ package com.sd.lib.compose.player
 
 private const val HEX_DIGITS = "0123456789ABCDEF"
 
-/** 提取 URI 中的用户名与密码并分别进行幂等百分比编码，兼容含 `@`、`#`、`?`、`/`、`=` 等特殊字符的密码 */
+/** 提取 URI 中的用户名与密码并分别进行幂等百分比编码，兼容含 `@`、`#`、`?`、`/`、`=` 等特殊字符的凭据 */
 internal fun encodeUserInfoIfNeed(uri: String): String {
   if (uri.isEmpty()) return uri
 
@@ -25,29 +25,34 @@ internal fun encodeUserInfoIfNeed(uri: String): String {
         startIndex = authorityEnd,
         allowQueryEquals = true,
         requireExplicitServerHost = false,
+        allowNestedPathSlashes = true,
+        requireColonInMiddle = false,
       )
       if (trailingAtIndex >= 0) trailingAtIndex else firstAtIndex
-    } else if (authorityEnd < uri.length) {
-      val delimiter = uri[authorityEnd]
+    } else if (authorityEnd < uri.length && !isExplicitServerHostPort(candidateHostPort)) {
       val trailingAtIndex = findTruncatedUserInfoAtIndex(
         uri = uri,
         startIndex = authorityEnd,
         allowQueryEquals = false,
-        requireExplicitServerHost = delimiter != '#',
+        requireExplicitServerHost = true,
+        allowNestedPathSlashes = false,
+        requireColonInMiddle = false,
       )
       if (trailingAtIndex >= 0) trailingAtIndex else firstAtIndex
     } else {
       firstAtIndex
     }
   } else {
-    if (!looksLikeTruncatedUserInfo(firstSegment)) return uri
-    val firstIsValidHostPort = isValidHostPort(firstSegment)
-    val delimiter = if (authorityEnd < uri.length) uri[authorityEnd] else '\u0000'
+    if (!canBeTruncatedUserInfoPrefix(firstSegment)) return uri
+    val hasColonInFirst = ':' in firstSegment
+    val firstIsValidHostPort = hasColonInFirst && isValidHostPort(firstSegment)
     findTruncatedUserInfoAtIndex(
       uri = uri,
       startIndex = authorityEnd,
-      allowQueryEquals = !firstIsValidHostPort,
-      requireExplicitServerHost = firstIsValidHostPort && delimiter != '#',
+      allowQueryEquals = hasColonInFirst && !firstIsValidHostPort,
+      requireExplicitServerHost = !hasColonInFirst || firstIsValidHostPort,
+      allowNestedPathSlashes = !firstIsValidHostPort,
+      requireColonInMiddle = !hasColonInFirst,
     )
   }
   if (atIndex <= userInfoStart) return uri
@@ -103,20 +108,24 @@ internal fun isValidRtspUri(encodedUri: String): Boolean {
   return isValidHostPort(hostPort)
 }
 
-/** 判断被 `/`、`?`、`#` 截断的首段是否为未编码的 `user:password` 前缀（而非完整 `host:port`） */
-private fun looksLikeTruncatedUserInfo(segment: String): Boolean {
-  if (segment.isEmpty() || segment.startsWith("[")) return false
-  val colonIndex = segment.indexOf(':')
-  return colonIndex > 0 && !isLikelyCompleteHostPort(segment)
+/** 判断被 `/`、`?`、`#` 截断的首段是否可能为未编码凭据前缀（而非完整域名或 IPv6 主机） */
+private fun canBeTruncatedUserInfoPrefix(segment: String): Boolean {
+  return segment.isNotEmpty()
+    && !segment.startsWith("[")
+    && !segment.startsWith(":")
+    && !isLikelyCompleteHostPort(segment)
 }
 
-/** 从截断偏移后逆向查找紧跟合法 `host[:port]` 的 `@` 分隔符下标，排除普通路径邮箱、查询参数与嵌套协议 */
+/** 从截断偏移后逆向查找紧跟合法 `host[:port]` 的 `@` 分隔符下标，排除路径层级、邮箱与查询参数 */
 private fun findTruncatedUserInfoAtIndex(
   uri: String,
   startIndex: Int,
   allowQueryEquals: Boolean,
   requireExplicitServerHost: Boolean,
+  allowNestedPathSlashes: Boolean,
+  requireColonInMiddle: Boolean,
 ): Int {
+  if (startIndex >= uri.length) return -1
   var searchFrom = uri.length - 1
   while (searchFrom >= startIndex) {
     val atIndex = uri.lastIndexOf('@', startIndex = searchFrom)
@@ -127,7 +136,16 @@ private fun findTruncatedUserInfoAtIndex(
     val hasDisallowedQueryEquals = !allowQueryEquals
       && queryStart >= 0
       && middle.indexOf('=', startIndex = queryStart + 1) >= 0
-    if (!hasDisallowedQueryEquals && "://" !in middle) {
+    val hasDisallowedNestedSlash = !allowNestedPathSlashes
+      && middle.length > 1
+      && '/' in middle.substring(1)
+    val missingRequiredColon = requireColonInMiddle && ':' !in middle
+
+    if (!hasDisallowedQueryEquals
+      && !hasDisallowedNestedSlash
+      && !missingRequiredColon
+      && "://" !in middle
+    ) {
       val hostEnd = uri.indexOfAny(charArrayOf('/', '?', '#'), startIndex = atIndex + 1)
         .let { if (it < 0) uri.length else it }
       val hostPort = uri.substring(atIndex + 1, hostEnd)
@@ -198,19 +216,41 @@ private fun isValidHostPort(hostPort: String): Boolean {
   if (hostPort.startsWith("[")) {
     val closeBracket = hostPort.indexOf(']')
     if (closeBracket <= 1) return false
+    val ipv6 = hostPort.substring(1, closeBracket)
+    if (!isValidIpv6Literal(ipv6)) return false
     if (closeBracket == hostPort.length - 1) return true
     return hostPort[closeBracket + 1] == ':' && isValidPort(hostPort.substring(closeBracket + 2))
   }
 
   val colonIndex = hostPort.indexOf(':')
   val host = if (colonIndex >= 0) hostPort.substring(0, colonIndex) else hostPort
-  if (host.isEmpty() || !host.all { it.isAsciiHostChar() }) return false
+  if (!isValidRegHost(host)) return false
 
   if (colonIndex >= 0) {
     val portPart = hostPort.substring(colonIndex + 1)
     if (!isValidPort(portPart)) return false
   }
   return true
+}
+
+private fun isValidIpv6Literal(ipv6: String): Boolean {
+  if (':' !in ipv6 || ":::" in ipv6) return false
+  if ((ipv6.startsWith(':') && !ipv6.startsWith("::"))
+    || (ipv6.endsWith(':') && !ipv6.endsWith("::"))
+  ) {
+    return false
+  }
+  return ipv6.all { it.isHexDigit() || it == ':' || it == '.' }
+}
+
+private fun isValidRegHost(host: String): Boolean {
+  if (host.isEmpty() || !host.all { it.isAsciiHostChar() }) return false
+  if (host.startsWith('.') || host.endsWith('.') || ".." in host) return false
+  if (host.startsWith('-') || host.endsWith('-')) return false
+  if (host.all { it in '0'..'9' || it == '.' }) {
+    return isIpv4Address(host)
+  }
+  return host.any { (it in 'A'..'Z') || (it in 'a'..'z') }
 }
 
 private fun isValidPort(port: String): Boolean {

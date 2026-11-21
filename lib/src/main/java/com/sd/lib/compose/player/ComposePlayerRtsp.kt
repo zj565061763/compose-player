@@ -16,10 +16,16 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
 import androidx.media3.exoplayer.source.MediaSource
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /** 在 Compose 中记住并在退出组合时自动释放 [ComposePlayerRtsp] */
 @Composable
@@ -119,81 +125,13 @@ internal class RtspPlayerImpl(
   )
 
   private var _isPlayingRequested = false
-  private var _isWatchdogRunning = false
+  private var _watchdogJob: Job? = null
 
   private var _lastPosition = -1L
   private var _lastPositionChangeTime = 0L
 
   private var _lastRenderedFrameCount = -1
   private var _lastFrameRenderedTime = 0L
-
-  /** 播放守护任务：负责卡死检查和追帧 */
-  private val _playWatchdogJob = object : Runnable {
-    override fun run() {
-      if (!_isWatchdogRunning) return
-
-      exoPlayer?.also { player ->
-        val now = SystemClock.elapsedRealtime()
-        val currentPosition = player.currentPosition
-        val isPlaying = player.isPlaying
-
-        // 检查进度是否在前进（连接与缓冲阶段放宽至 timeoutMs 之后，避免抢先打断底层超时异常）
-        if (stuckPositionInterval > 0) {
-          val threshold = if (playerStateFlow.value == ComposePlayerState.Playing || timeoutMs <= 0) {
-            stuckPositionInterval
-          } else {
-            maxOf(stuckPositionInterval, timeoutMs + 2_000L)
-          }
-          if (_lastPosition != currentPosition) {
-            _lastPosition = currentPosition
-            _lastPositionChangeTime = now
-          } else if (_lastPositionChangeTime > 0 && now - _lastPositionChangeTime > threshold) {
-            _eventFlow.tryEmit(ComposePlayerRtspEvent.StuckPosition)
-            restartPlay()
-            return
-          }
-        }
-
-        // 检查渲染帧数是否在增加，仅在实际播放且绑定有效渲染表面时检测
-        val surfaceSize = player.surfaceSize
-        val hasValidSurface = isPlaying && surfaceSize.width > 0 && surfaceSize.height > 0
-        if (stuckRenderedFrameInterval > 0 && hasValidSurface) {
-          player.videoDecoderCounters?.also { counters ->
-            val currentRenderedFrameCount = counters.renderedOutputBufferCount
-            if (_lastRenderedFrameCount != currentRenderedFrameCount) {
-              _lastRenderedFrameCount = currentRenderedFrameCount
-              _lastFrameRenderedTime = now
-            } else if (_lastFrameRenderedTime > 0 && now - _lastFrameRenderedTime > stuckRenderedFrameInterval) {
-              _eventFlow.tryEmit(ComposePlayerRtspEvent.StuckRenderedFrame)
-              restartPlay()
-              return
-            }
-          }
-        } else {
-          _lastRenderedFrameCount = -1
-          _lastFrameRenderedTime = now
-        }
-
-        // 追帧逻辑
-        if (chaseLatency > 0) {
-          val bufferedPosition = player.bufferedPosition
-          if (bufferedPosition != C.TIME_UNSET && currentPosition != C.TIME_UNSET) {
-            val drift = bufferedPosition - currentPosition
-            if (drift > chaseLatency) {
-              player.extSetSpeed(1.2f)
-            } else if (drift < (chaseLatency / 2)) {
-              player.extSetSpeed(1.0f)
-            }
-          }
-        }
-      }
-
-      if (_isWatchdogRunning) {
-        val interval = if (chaseLatency > 0) (chaseLatency / 2).coerceAtLeast(100) else 1000L
-        mainHandler.postDelayed(this, interval)
-      }
-    }
-  }
 
   override val eventFlow: Flow<ComposePlayerRtspEvent> = _eventFlow.asSharedFlow()
 
@@ -227,12 +165,28 @@ internal class RtspPlayerImpl(
     require(isValidRtspUri(encodedUri)) { "Invalid RTSP URI" }
   }
 
-  override fun handleIsPlayingChanged(player: ExoPlayer?, isPlaying: Boolean) {
-    if (isPlaying) {
-      setPlayerState(ComposePlayerState.Playing)
-      startPlayWatchdogJob()
-    } else if ((player?.playbackState ?: Player.STATE_IDLE) == Player.STATE_READY) {
-      stopPlayWatchdogJob()
+  override fun computePlayerState(
+    player: ExoPlayer?,
+    currentState: ComposePlayerState,
+  ): ComposePlayerState {
+    if (player == null || !_isPlayingRequested) {
+      return ComposePlayerState.Idle
+    }
+    if (player.playbackSuppressionReason != Player.PLAYBACK_SUPPRESSION_REASON_NONE) {
+      return ComposePlayerState.Idle
+    }
+    return when (player.playbackState) {
+      Player.STATE_READY -> {
+        if (player.isPlaying) ComposePlayerState.Playing else ComposePlayerState.Idle
+      }
+      Player.STATE_BUFFERING -> {
+        if (currentState == ComposePlayerState.Playing) {
+          ComposePlayerState.Playing
+        } else {
+          ComposePlayerState.Idle
+        }
+      }
+      else -> ComposePlayerState.Idle
     }
   }
 
@@ -242,12 +196,9 @@ internal class RtspPlayerImpl(
     }
   }
 
-  override fun handlePlaybackSuppressionReasonChanged(player: ExoPlayer, reason: Int) {
-    if (!_isPlayingRequested) return
-    if (reason != Player.PLAYBACK_SUPPRESSION_REASON_NONE) {
-      stopPlayWatchdogJob()
-      setPlayerState(ComposePlayerState.Idle)
-    } else if (player.playbackState == Player.STATE_READY) {
+  override fun onPlaybackSuppressionChanged(player: ExoPlayer, reason: Int): Boolean {
+    if (!_isPlayingRequested) return false
+    if (reason == Player.PLAYBACK_SUPPRESSION_REASON_NONE && player.playbackState == Player.STATE_READY) {
       val bufferedPosition = player.bufferedPosition
       val currentPosition = player.currentPosition
       val maxResumeDrift = maxOf(chaseLatency * 5, 2_000L)
@@ -256,28 +207,37 @@ internal class RtspPlayerImpl(
         && bufferedPosition - currentPosition > maxResumeDrift
       ) {
         restartPlay()
+        return true
       }
     }
+    return false
   }
 
-  override fun onStateIdle() {
-    stopPlayWatchdogJob()
-  }
-
-  override fun onStateReady(player: ExoPlayer) {
+  override fun onStateReady(player: ExoPlayer): Boolean {
     if (_isPlayingRequested) {
-      player.play()
-    } else {
-      stopPlayer()
+      if (!player.playWhenReady) player.play()
+      return true
     }
+    stopPlayer()
+    return false
   }
 
-  override fun onStateEnded(player: ExoPlayer) {
+  override fun onStateEnded(player: ExoPlayer): Boolean {
     if (_isPlayingRequested) {
       restartPlay()
     } else {
       stopPlayer()
     }
+    return false
+  }
+
+  override fun onStateSynced(
+    player: ExoPlayer?,
+    previousState: ComposePlayerState,
+    newState: ComposePlayerState,
+  ) {
+    val enteredPlaying = previousState != ComposePlayerState.Playing && newState == ComposePlayerState.Playing
+    syncWatchdog(player, enteredPlaying)
   }
 
   override fun handlePlayerError(error: ComposePlayerException) {
@@ -293,12 +253,10 @@ internal class RtspPlayerImpl(
     }
   }
 
-  /** 启动底层拉流并在媒体绑定后开启守护监控 */
+  /** 启动底层拉流并同步看门狗状态 */
   private fun startStream() {
     startPlayer()
-    if (_isPlayingRequested && isMediaBound) {
-      startPlayWatchdogJob()
-    }
+    syncWatchdog(exoPlayer, enteredPlaying = false)
   }
 
   private fun restartPlay() {
@@ -306,8 +264,27 @@ internal class RtspPlayerImpl(
     startStream()
   }
 
+  /** 按当前播放与音频抑制状态自动启停守护任务 */
+  private fun syncWatchdog(
+    player: ExoPlayer?,
+    enteredPlaying: Boolean,
+  ) {
+    val shouldRun = _isPlayingRequested
+      && isMediaBound
+      && player != null
+      && player.playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_NONE
+      && (player.playbackState == Player.STATE_BUFFERING
+        || (player.playbackState == Player.STATE_READY && player.isPlaying))
+
+    if (shouldRun) {
+      startPlayWatchdogJob(refreshBaselineTime = enteredPlaying)
+    } else {
+      stopPlayWatchdogJob()
+    }
+  }
+
   /** 开始播放守护任务 */
-  private fun startPlayWatchdogJob() {
+  private fun startPlayWatchdogJob(refreshBaselineTime: Boolean) {
     if (stuckPositionInterval <= 0
       && stuckRenderedFrameInterval <= 0
       && chaseLatency <= 0
@@ -316,23 +293,93 @@ internal class RtspPlayerImpl(
     }
 
     val now = SystemClock.elapsedRealtime()
-    _lastPositionChangeTime = now
-    _lastFrameRenderedTime = now
-
-    if (!_isWatchdogRunning) {
-      _isWatchdogRunning = true
-      _lastPosition = -1L
-      _lastRenderedFrameCount = -1
-      mainHandler.removeCallbacks(_playWatchdogJob)
-      mainHandler.post(_playWatchdogJob)
+    if (_watchdogJob == null || refreshBaselineTime) {
+      _lastPositionChangeTime = now
+      _lastFrameRenderedTime = now
     }
+    if (_watchdogJob != null) return
+
+    _lastPosition = -1L
+    _lastRenderedFrameCount = -1
+    val loopInterval = if (chaseLatency > 0) {
+      (chaseLatency / 2).coerceAtLeast(100L).milliseconds
+    } else {
+      1.seconds
+    }
+    _watchdogJob = mainScope.launch {
+      while (isActive) {
+        if (checkWatchdogTick()) {
+          return@launch
+        }
+        delay(loopInterval)
+      }
+    }
+  }
+
+  /** 执行单次卡死检查与倍速追帧，触发重启时返回 true */
+  private fun checkWatchdogTick(): Boolean {
+    val player = exoPlayer ?: return false
+    val now = SystemClock.elapsedRealtime()
+    val currentPosition = player.currentPosition
+    val isPlaying = player.isPlaying
+
+    // 检查进度是否在前进（连接与缓冲阶段放宽至 timeoutMs 之后，避免抢先打断底层超时异常）
+    if (stuckPositionInterval > 0) {
+      val threshold = if (playerStateFlow.value == ComposePlayerState.Playing || timeoutMs <= 0) {
+        stuckPositionInterval
+      } else {
+        maxOf(stuckPositionInterval, timeoutMs + 2_000L)
+      }
+      if (_lastPosition != currentPosition) {
+        _lastPosition = currentPosition
+        _lastPositionChangeTime = now
+      } else if (_lastPositionChangeTime > 0 && now - _lastPositionChangeTime > threshold) {
+        _eventFlow.tryEmit(ComposePlayerRtspEvent.StuckPosition)
+        restartPlay()
+        return true
+      }
+    }
+
+    // 检查渲染帧数是否在增加，仅在实际播放且绑定有效渲染表面时检测
+    val surfaceSize = player.surfaceSize
+    val hasValidSurface = isPlaying && surfaceSize.width > 0 && surfaceSize.height > 0
+    if (stuckRenderedFrameInterval > 0 && hasValidSurface) {
+      player.videoDecoderCounters?.also { counters ->
+        val currentRenderedFrameCount = counters.renderedOutputBufferCount
+        if (_lastRenderedFrameCount != currentRenderedFrameCount) {
+          _lastRenderedFrameCount = currentRenderedFrameCount
+          _lastFrameRenderedTime = now
+        } else if (_lastFrameRenderedTime > 0 && now - _lastFrameRenderedTime > stuckRenderedFrameInterval) {
+          _eventFlow.tryEmit(ComposePlayerRtspEvent.StuckRenderedFrame)
+          restartPlay()
+          return true
+        }
+      }
+    } else {
+      _lastRenderedFrameCount = -1
+      _lastFrameRenderedTime = now
+    }
+
+    // 追帧逻辑
+    if (chaseLatency > 0) {
+      val bufferedPosition = player.bufferedPosition
+      if (bufferedPosition != C.TIME_UNSET && currentPosition != C.TIME_UNSET) {
+        val drift = bufferedPosition - currentPosition
+        if (drift > chaseLatency) {
+          player.extSetSpeed(1.2f)
+        } else if (drift < (chaseLatency / 2)) {
+          player.extSetSpeed(1.0f)
+        }
+      }
+    }
+    return false
   }
 
   /** 停止播放守护任务并恢复默认播放倍速 */
   private fun stopPlayWatchdogJob() {
-    if (_isWatchdogRunning) {
-      _isWatchdogRunning = false
-      mainHandler.removeCallbacks(_playWatchdogJob)
+    _watchdogJob?.also { job ->
+      _watchdogJob = null
+      job.cancel()
       exoPlayer?.extSetSpeed(1.0f)
     }
   }

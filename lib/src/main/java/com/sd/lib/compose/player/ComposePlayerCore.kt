@@ -38,6 +38,13 @@ sealed interface ComposePlayerCore {
   /** 当前播放进度时间点（毫秒） */
   fun getCurrentPosition(): Long
 
+  /**
+   * 按[interval]采样当前播放进度（毫秒），仅在播放中定时轮询，状态切换或跳转时立即发射
+   *
+   * @param interval 播放中的采样时间间隔，默认 200ms
+   */
+  fun positionFlow(interval: Duration = 200.milliseconds): Flow<Long>
+
   /** 设置静音 */
   fun setMute(mute: Boolean)
 
@@ -85,15 +92,4 @@ suspend fun ComposePlayerCore.awaitBufferReady() {
 /** 挂起等待首帧渲染完毕 */
 suspend fun ComposePlayerCore.awaitRenderedFirstFrame() {
   isRenderedFirstFrameFlow.first { it }
-}
-
-/**
- * 按[interval]采样当前播放进度（毫秒），仅在播放中定时轮询，状态切换或跳转时立即发射
- *
- * @param interval 播放中的采样时间间隔，默认 200ms
- */
-fun ComposePlayerCore.positionFlow(
-  interval: Duration = 200.milliseconds,
-): Flow<Long> {
-  return (this as BaseComposePlayer).observePosition(interval)
 }

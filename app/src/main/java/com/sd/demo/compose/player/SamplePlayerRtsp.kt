@@ -34,7 +34,6 @@ import com.sd.demo.compose.player.theme.AppTheme
 import com.sd.lib.compose.player.ComposePlayerCore
 import com.sd.lib.compose.player.ComposePlayerView
 import com.sd.lib.compose.player.desc
-import com.sd.lib.compose.player.positionFlow
 import com.sd.lib.compose.player.rememberComposePlayerRtsp
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch

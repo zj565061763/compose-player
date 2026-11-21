@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -12,6 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalInspectionMode
@@ -47,7 +49,10 @@ fun ComposePlayerView(
     if (LocalInspectionMode.current) return@Box
 
     val exoPlayer = (player as? BaseComposePlayer)?.exoPlayer
+    val isRenderedFirstFrame by player.isRenderedFirstFrameFlow.collectAsState()
+    val videoSize by player.videoSizeFlow.collectAsState()
     val presentationState = rememberPresentationState(exoPlayer)
+    val sourceSizeDp = if (videoSize != null) presentationState.videoSizeDp else null
 
     key(rebindKeyProvider()) {
       PlayerSurface(
@@ -55,8 +60,9 @@ fun ComposePlayerView(
           .fillMaxSize()
           .resizeWithContentScale(
             contentScale = contentScale,
-            sourceSizeDp = presentationState.videoSizeDp,
-          ),
+            sourceSizeDp = sourceSizeDp,
+          )
+          .alpha(if (isRenderedFirstFrame) 1f else 0f),
         player = exoPlayer,
         surfaceType = when (surfaceType) {
           ComposePlayerViewSurfaceType.SurfaceView -> SURFACE_TYPE_SURFACE_VIEW

@@ -13,17 +13,21 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 /** 在 Compose 中记住并在退出组合时自动释放 [ComposePlayer] */
 @Composable
@@ -114,10 +118,13 @@ sealed interface ComposePlayer : ComposePlayerCore {
           }
 
         val baseDataSourceFactory = if (cache != null) {
-          CacheDataSource.Factory()
-            .setCache(cache.cache)
-            .setUpstreamDataSourceFactory(httpDataSourceFactory)
-            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+          val lazyCacheFactory by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+            CacheDataSource.Factory()
+              .setCache(cache.cache)
+              .setUpstreamDataSourceFactory(httpDataSourceFactory)
+              .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+          }
+          DataSource.Factory { lazyCacheFactory.createDataSource() }
         } else {
           httpDataSourceFactory
         }
@@ -174,7 +181,7 @@ internal class VodPlayerImpl(
   private val _isLoopingFlow = MutableStateFlow(false)
 
   private var _playIntent = VodPlayIntent.Idle
-  private var _seekToPositionMs: Long? = null
+  private var _autoStartJob: Job? = null
 
   override val durationFlow: StateFlow<Long?> = _durationFlow.asStateFlow()
   override val speedFlow: StateFlow<Float> = _speedFlow.asStateFlow()
@@ -182,8 +189,16 @@ internal class VodPlayerImpl(
 
   override fun setDataSource(uri: String) {
     if (updateDataSource(uri)) {
+      cancelAutoStart()
       when (_playIntent) {
-        VodPlayIntent.Playing -> startPlayer()
+        VodPlayIntent.Playing -> {
+          _autoStartJob = mainScope.launch(Dispatchers.Main) {
+            _autoStartJob = null
+            if (_playIntent == VodPlayIntent.Playing && !isMediaBound) {
+              startPlayer()
+            }
+          }
+        }
         VodPlayIntent.Paused -> {
           _playIntent = VodPlayIntent.Idle
         }
@@ -193,22 +208,23 @@ internal class VodPlayerImpl(
   }
 
   override fun prepare() {
-    if (playerStateFlow.value == ComposePlayerState.Ended) return
-    if (_playIntent == VodPlayIntent.Playing) {
-      preparePlayer()
+    if (!hasDataSource) return
+    if (playerStateFlow.value == ComposePlayerState.Playing
+      || playerStateFlow.value == ComposePlayerState.Ended
+    ) {
       return
     }
-    _playIntent = VodPlayIntent.Paused
+    cancelAutoStart()
     stopRetry()
+    _playIntent = VodPlayIntent.Paused
     preparePlayer()?.also { player ->
       player.pause()
-      if (player.playbackState == Player.STATE_READY) {
-        setPlayerState(ComposePlayerState.Paused)
-      }
+      syncPlayerState()
     }
   }
 
   override fun play() {
+    cancelAutoStart()
     _playIntent = VodPlayIntent.Playing
     stopRetry()
     startPlayer()
@@ -216,22 +232,20 @@ internal class VodPlayerImpl(
 
   override fun pause() {
     if (_playIntent != VodPlayIntent.Playing) return
+    cancelAutoStart()
     stopRetry()
     val player = exoPlayer
-    if (player == null) {
+    if (player == null || !isMediaBound) {
       _playIntent = VodPlayIntent.Idle
       return
     }
     _playIntent = VodPlayIntent.Paused
     player.pause()
-    if (player.playbackState == Player.STATE_READY
-      || playerStateFlow.value == ComposePlayerState.Playing
-    ) {
-      setPlayerState(ComposePlayerState.Paused)
-    }
+    syncPlayerState()
   }
 
   override fun stop() {
+    cancelAutoStart()
     _playIntent = VodPlayIntent.Idle
     stopPlayer()
   }
@@ -239,7 +253,7 @@ internal class VodPlayerImpl(
   override fun seekTo(positionMs: Long) {
     val player = exoPlayer
     if (player == null || !isMediaBound) {
-      _seekToPositionMs = positionMs.coerceAtLeast(0L)
+      pendingStartPositionMs = positionMs.coerceAtLeast(0L)
       notifyPositionChanged()
       return
     }
@@ -256,15 +270,16 @@ internal class VodPlayerImpl(
         return
       }
       _playIntent = VodPlayIntent.Paused
-      setPlayerState(ComposePlayerState.Paused)
     }
 
-    _seekToPositionMs = null
+    pendingStartPositionMs = C.TIME_UNSET
     player.seekTo(targetPosition)
+    syncPlayerState()
     notifyPositionChanged()
   }
 
   override fun getDuration(): Long? {
+    if (!isMediaBound) return null
     val duration = exoPlayer?.duration ?: return null
     return if (duration == C.TIME_UNSET) null else duration.takeIf { it > 0 }
   }
@@ -285,22 +300,13 @@ internal class VodPlayerImpl(
   }
 
   override fun release() {
+    cancelAutoStart()
     _playIntent = VodPlayIntent.Idle
     releasePlayer()
   }
 
   override fun createExoPlayer(context: Context): ExoPlayer {
     return playerProvider(context)
-  }
-
-  override fun getPendingPositionMs(): Long? {
-    return _seekToPositionMs
-  }
-
-  override fun consumeStartPositionMs(): Long {
-    val positionMs = _seekToPositionMs ?: return C.TIME_UNSET
-    _seekToPositionMs = null
-    return positionMs.coerceAtLeast(0L)
   }
 
   override fun onPlayerCreated(player: ExoPlayer) {
@@ -312,51 +318,86 @@ internal class VodPlayerImpl(
     }
   }
 
-  override fun onStopped() {
-    _seekToPositionMs = null
-  }
-
-  override fun handleIsPlayingChanged(player: ExoPlayer?, isPlaying: Boolean) {
-    if (isPlaying) {
-      setPlayerState(ComposePlayerState.Playing)
-    } else if ((player?.playbackState ?: Player.STATE_IDLE) == Player.STATE_READY) {
-      setPlayerState(ComposePlayerState.Paused)
+  override fun computePlayerState(
+    player: ExoPlayer?,
+    currentState: ComposePlayerState,
+  ): ComposePlayerState {
+    if (player == null) return ComposePlayerState.Idle
+    return when (player.playbackState) {
+      Player.STATE_IDLE -> ComposePlayerState.Idle
+      Player.STATE_ENDED -> {
+        if (_playIntent == VodPlayIntent.Paused) {
+          ComposePlayerState.Paused
+        } else {
+          ComposePlayerState.Ended
+        }
+      }
+      Player.STATE_READY -> {
+        if (_playIntent == VodPlayIntent.Idle) {
+          ComposePlayerState.Idle
+        } else if (player.isPlaying) {
+          ComposePlayerState.Playing
+        } else {
+          ComposePlayerState.Paused
+        }
+      }
+      Player.STATE_BUFFERING -> {
+        if (currentState == ComposePlayerState.Idle || _playIntent == VodPlayIntent.Idle) {
+          ComposePlayerState.Idle
+        } else if (_playIntent == VodPlayIntent.Playing
+          && player.playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_NONE
+          && currentState == ComposePlayerState.Playing
+        ) {
+          ComposePlayerState.Playing
+        } else {
+          ComposePlayerState.Paused
+        }
+      }
+      else -> ComposePlayerState.Idle
     }
   }
 
   override fun onPlayWhenReadyLost() {
     if (_playIntent == VodPlayIntent.Playing) {
       _playIntent = VodPlayIntent.Paused
-      if (playerStateFlow.value == ComposePlayerState.Playing) {
-        setPlayerState(ComposePlayerState.Paused)
-      }
     }
   }
 
-  override fun onStateIdle() {
-    _durationFlow.value = null
-  }
-
-  override fun onStateReady(player: ExoPlayer) {
-    updateDurationFlow()
-    when (_playIntent) {
-      VodPlayIntent.Playing -> player.play()
+  override fun onStateReady(player: ExoPlayer): Boolean {
+    return when (_playIntent) {
+      VodPlayIntent.Playing -> {
+        if (!player.playWhenReady) player.play()
+        true
+      }
       VodPlayIntent.Paused -> {
-        player.pause()
-        setPlayerState(ComposePlayerState.Paused)
+        if (player.playWhenReady) player.pause()
+        true
       }
-      VodPlayIntent.Idle -> stopPlayer()
+      VodPlayIntent.Idle -> {
+        stopPlayer()
+        false
+      }
     }
   }
 
-  override fun onStateEnded(player: ExoPlayer) {
-    player.pause()
+  override fun onStateEnded(player: ExoPlayer): Boolean {
+    if (player.playWhenReady) {
+      player.pause()
+    }
     _playIntent = VodPlayIntent.Idle
-    setPlayerState(ComposePlayerState.Ended)
+    return true
   }
 
-  override fun onTimelineOrMediaChanged(player: ExoPlayer) {
-    updateDurationFlow()
+  override fun onStateSynced(
+    player: ExoPlayer?,
+    previousState: ComposePlayerState,
+    newState: ComposePlayerState,
+  ) {
+    _durationFlow.value = if (player == null || player.playbackState == Player.STATE_IDLE) {
+      null
+    } else {
+      getDuration()
+    }
   }
 
   override fun handlePlayerError(error: ComposePlayerException) {
@@ -375,7 +416,10 @@ internal class VodPlayerImpl(
     }
   }
 
-  private fun updateDurationFlow() {
-    _durationFlow.value = getDuration()
+  private fun cancelAutoStart() {
+    _autoStartJob?.also { job ->
+      _autoStartJob = null
+      job.cancel()
+    }
   }
 }
