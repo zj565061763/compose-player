@@ -107,5 +107,5 @@ fun ComposePlayerCore.setDataSource(@RawRes resId: Int) {
 fun ComposePlayerCore.positionFlow(
   interval: Duration = 200.milliseconds,
 ): Flow<Long> {
-  return (this as PlayerEngineOwner).engine.observePosition(interval)
+  return (this as BaseComposePlayer).engine.observePosition(interval)
 }

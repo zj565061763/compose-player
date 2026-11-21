@@ -2,7 +2,6 @@ package com.sd.lib.compose.player
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.os.Handler
 import android.os.SystemClock
 import androidx.annotation.OptIn
 import androidx.compose.runtime.Composable
@@ -10,17 +9,13 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.C
-import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.Renderer
-import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
 import androidx.media3.exoplayer.source.MediaSource
-import androidx.media3.exoplayer.video.VideoRendererEventListener
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -85,6 +80,7 @@ sealed interface ComposePlayerRtsp : ComposePlayerCore {
         stuckPositionInterval = stuckPositionInterval,
         stuckRenderedFrameInterval = stuckRenderedFrameInterval,
         chaseLatency = chaseLatency,
+        timeoutMs = timeoutMs,
         playerProvider = { ctx ->
           newLivePlayer(
             context = ctx,
@@ -114,6 +110,7 @@ internal class RtspPlayerImpl(
   private val stuckPositionInterval: Long,
   private val stuckRenderedFrameInterval: Long,
   private val chaseLatency: Long,
+  private val timeoutMs: Long,
   private val playerProvider: (Context) -> ExoPlayer,
 ) : BaseComposePlayer(), ComposePlayerRtsp {
   private val _eventFlow = MutableSharedFlow<ComposePlayerRtspEvent>(
@@ -138,36 +135,38 @@ internal class RtspPlayerImpl(
       engine.exoPlayer?.also { player ->
         val now = SystemClock.elapsedRealtime()
         val currentPosition = player.currentPosition
+        val isPlaying = player.isPlaying
 
-        // 检查进度是否在前进
+        // 检查进度是否在前进（连接与缓冲阶段放宽至 timeoutMs 之后，避免抢先打断底层超时异常）
         if (stuckPositionInterval > 0) {
+          val threshold = if (engine.playerStateFlow.value == ComposePlayerState.Playing || timeoutMs <= 0) {
+            stuckPositionInterval
+          } else {
+            maxOf(stuckPositionInterval, timeoutMs + 2_000L)
+          }
           if (_lastPosition != currentPosition) {
             _lastPosition = currentPosition
             _lastPositionChangeTime = now
-          } else {
-            if (_lastPositionChangeTime > 0 && now - _lastPositionChangeTime > stuckPositionInterval) {
-              _eventFlow.tryEmit(ComposePlayerRtspEvent.StuckPosition)
-              restartPlay()
-              return
-            }
+          } else if (_lastPositionChangeTime > 0 && now - _lastPositionChangeTime > threshold) {
+            _eventFlow.tryEmit(ComposePlayerRtspEvent.StuckPosition)
+            restartPlay()
+            return
           }
         }
 
-        // 检查渲染帧数是否在增加，仅在绑定有效渲染表面时检测
+        // 检查渲染帧数是否在增加，仅在实际播放且绑定有效渲染表面时检测
         val surfaceSize = player.surfaceSize
-        val hasValidSurface = surfaceSize.width > 0 && surfaceSize.height > 0
+        val hasValidSurface = isPlaying && surfaceSize.width > 0 && surfaceSize.height > 0
         if (stuckRenderedFrameInterval > 0 && hasValidSurface) {
           player.videoDecoderCounters?.also { counters ->
             val currentRenderedFrameCount = counters.renderedOutputBufferCount
             if (_lastRenderedFrameCount != currentRenderedFrameCount) {
               _lastRenderedFrameCount = currentRenderedFrameCount
               _lastFrameRenderedTime = now
-            } else {
-              if (_lastFrameRenderedTime > 0 && now - _lastFrameRenderedTime > stuckRenderedFrameInterval) {
-                _eventFlow.tryEmit(ComposePlayerRtspEvent.StuckRenderedFrame)
-                restartPlay()
-                return
-              }
+            } else if (_lastFrameRenderedTime > 0 && now - _lastFrameRenderedTime > stuckRenderedFrameInterval) {
+              _eventFlow.tryEmit(ComposePlayerRtspEvent.StuckRenderedFrame)
+              restartPlay()
+              return
             }
           }
         } else {
@@ -209,7 +208,7 @@ internal class RtspPlayerImpl(
     if (engine.setDataSource(uri)) {
       stopPlayWatchdogJob()
       if (_isPlayingRequested) {
-        engine.startPlayer()
+        startStream()
       }
     }
   }
@@ -217,7 +216,7 @@ internal class RtspPlayerImpl(
   override fun play() {
     _isPlayingRequested = true
     engine.stopRetry()
-    engine.startPlayer()
+    startStream()
   }
 
   override fun stop() {
@@ -232,10 +231,18 @@ internal class RtspPlayerImpl(
     engine.release()
   }
 
+  /** 启动底层拉流并在媒体绑定后开启守护监控 */
+  private fun startStream() {
+    engine.startPlayer()
+    if (_isPlayingRequested && engine.isMediaBound) {
+      startPlayWatchdogJob()
+    }
+  }
+
   private fun restartPlay() {
     stopPlayWatchdogJob()
     engine.stopPlayer()
-    engine.startPlayer()
+    startStream()
   }
 
   /** 开始播放守护任务 */
@@ -247,14 +254,14 @@ internal class RtspPlayerImpl(
       return
     }
 
+    val now = SystemClock.elapsedRealtime()
+    _lastPositionChangeTime = now
+    _lastFrameRenderedTime = now
+
     if (!_isWatchdogRunning) {
       _isWatchdogRunning = true
       _lastPosition = -1L
-      _lastPositionChangeTime = SystemClock.elapsedRealtime()
-
       _lastRenderedFrameCount = -1
-      _lastFrameRenderedTime = SystemClock.elapsedRealtime()
-
       engine.handler.removeCallbacks(_playWatchdogJob)
       engine.handler.post(_playWatchdogJob)
     }
@@ -309,16 +316,16 @@ internal class RtspPlayerImpl(
       }
     }
 
-    override fun onPlayerError(error: PlaybackException) {
-      val canRetry = !error.isAuthError() && _isPlayingRequested
+    override fun onPlayerError(error: ComposePlayerException) {
+      stopPlayWatchdogJob()
+      val canRetry = error is ComposePlayerException.Playback && _isPlayingRequested
       val scheduled = canRetry && engine.startRetry {
         if (_isPlayingRequested) {
-          engine.startPlayer()
+          startStream()
         }
       }
       if (!scheduled) {
         _isPlayingRequested = false
-        stopPlayWatchdogJob()
       }
     }
   }
@@ -338,29 +345,9 @@ private fun newLivePlayer(
     .setBackBuffer(0, false)
     .build()
 
-  val renderersFactory = object : DefaultRenderersFactory(context) {
-    override fun buildVideoRenderers(
-      context: Context,
-      extensionRendererMode: Int,
-      mediaCodecSelector: MediaCodecSelector,
-      enableDecoderFallback: Boolean,
-      eventHandler: Handler,
-      eventListener: VideoRendererEventListener,
-      allowedVideoJoiningTimeMs: Long,
-      out: ArrayList<Renderer>,
-    ) {
-      super.buildVideoRenderers(
-        context,
-        extensionRendererMode,
-        mediaCodecSelector,
-        enableDecoderFallback,
-        eventHandler,
-        eventListener,
-        0L,
-        out,
-      )
-    }
-  }.setEnableDecoderFallback(enableDecoderFallback)
+  val renderersFactory = DefaultRenderersFactory(context)
+    .setEnableDecoderFallback(enableDecoderFallback)
+    .setAllowedVideoJoiningTimeMs(0L)
 
   return ExoPlayer.Builder(context, renderersFactory)
     .setMediaSourceFactory(mediaSourceFactory)

@@ -8,7 +8,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.C
-import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
@@ -165,6 +164,9 @@ internal class VodPlayerImpl(
 
   override fun setDataSource(uri: String) {
     if (engine.setDataSource(uri)) {
+      if (_requireState == ComposePlayerState.Ended) {
+        _requireState = ComposePlayerState.Idle
+      }
       syncPlayer()
     }
   }
@@ -190,23 +192,26 @@ internal class VodPlayerImpl(
   override fun seekTo(positionMs: Long) {
     if (_requireState == ComposePlayerState.Ended) {
       _requireState = ComposePlayerState.Paused
+      if (engine.playerStateFlow.value == ComposePlayerState.Ended) {
+        engine.setPlayerState(ComposePlayerState.Paused)
+      }
     }
 
     val player = engine.exoPlayer
     if (player == null || !engine.isMediaBound) {
-      _seekToPositionMs = positionMs
+      _seekToPositionMs = positionMs.coerceAtLeast(0L)
+      engine.notifyPositionChanged()
       return
     }
 
     val duration = getDuration()
-    if (duration == null) {
-      _seekToPositionMs = positionMs
-      return
+    val targetPosition = if (duration != null) {
+      positionMs.coerceIn(0L, duration)
+    } else {
+      positionMs.coerceAtLeast(0L)
     }
-
-    val targetPosition = positionMs.coerceIn(0L, duration)
-    player.seekTo(targetPosition)
     _seekToPositionMs = null
+    player.seekTo(targetPosition)
     engine.notifyPositionChanged()
   }
 
@@ -216,6 +221,7 @@ internal class VodPlayerImpl(
   }
 
   override fun setSpeed(speed: Float) {
+    require(speed > 0f && speed.isFinite()) { "speed must be positive and finite: $speed" }
     if (_speedFlow.value != speed) {
       _speedFlow.value = speed
       engine.exoPlayer?.extSetSpeed(speed)
@@ -258,14 +264,16 @@ internal class VodPlayerImpl(
   }
 
   private fun updateDurationFlow() {
-    getDuration()?.also { duration ->
-      _durationFlow.value = duration
-    }
+    _durationFlow.value = getDuration()
   }
 
   private inner class EngineCallback : PlayerEngine.Callback {
     override fun createExoPlayer(context: Context): ExoPlayer {
       return playerProvider(context)
+    }
+
+    override fun getPendingPositionMs(): Long? {
+      return _seekToPositionMs
     }
 
     override fun consumeStartPositionMs(): Long {
@@ -310,7 +318,6 @@ internal class VodPlayerImpl(
 
     override fun onStateReady(player: ExoPlayer) {
       updateDurationFlow()
-      _seekToPositionMs?.also { seekTo(it) }
       syncPlayer()
     }
 
@@ -324,9 +331,9 @@ internal class VodPlayerImpl(
       updateDurationFlow()
     }
 
-    override fun onPlayerError(error: PlaybackException) {
+    override fun onPlayerError(error: ComposePlayerException) {
       val requireState = _requireState
-      val canRetry = !error.isAuthError()
+      val canRetry = error is ComposePlayerException.Playback
         && (requireState == ComposePlayerState.Playing || requireState == ComposePlayerState.Paused)
       val scheduled = canRetry && engine.startRetry {
         when (requireState) {

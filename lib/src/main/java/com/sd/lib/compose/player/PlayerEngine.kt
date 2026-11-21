@@ -33,13 +33,10 @@ import kotlin.time.Duration.Companion.milliseconds
 
 private const val HEX_DIGITS = "0123456789ABCDEF"
 
-/** 内部引擎持有者标记接口 */
-internal interface PlayerEngineOwner {
-  val engine: PlayerEngine
-}
-
 /** 播放器内部公共基类，统一向 [PlayerEngine] 转发共用状态与控制操作 */
-internal abstract class BaseComposePlayer : ComposePlayerCore, PlayerEngineOwner {
+internal abstract class BaseComposePlayer : ComposePlayerCore {
+  internal abstract val engine: PlayerEngine
+
   override val playerStateFlow: StateFlow<ComposePlayerState>
     get() = engine.playerStateFlow
 
@@ -121,7 +118,9 @@ internal class PlayerEngine(
   fun prepare(): ExoPlayer? {
     val dataSource = _dataSource ?: return null
     if (dataSource.isBlank()) {
-      setException(ComposePlayerException.DataSourceBlank())
+      val exception = ComposePlayerException.DataSourceBlank()
+      setException(exception)
+      callback.onPlayerError(exception)
       return null
     }
 
@@ -147,7 +146,9 @@ internal class PlayerEngine(
           }
           _isMediaBound = true
         }.onFailure { e ->
-          setException(ComposePlayerException.DataSource(cause = e))
+          val exception = ComposePlayerException.DataSource(cause = e)
+          setException(exception)
+          callback.onPlayerError(exception)
           return null
         }
       }
@@ -177,14 +178,15 @@ internal class PlayerEngine(
       }
       player.clearMediaItems()
     }
-    _bufferStateFlow.value = ComposePlayerBufferState.None
-    setPlayerState(ComposePlayerState.Idle)
+    resetIdleStates()
     callback.onStopped()
     notifyPositionChanged()
   }
 
   fun getCurrentPosition(): Long {
-    if (!_isMediaBound) return 0L
+    if (!_isMediaBound) {
+      return callback.getPendingPositionMs() ?: 0L
+    }
     return (exoPlayer?.currentPosition ?: 0L).coerceAtLeast(0L)
   }
 
@@ -227,22 +229,22 @@ internal class PlayerEngine(
 
   fun release() {
     stopPlayer()
-
     exoPlayer?.also { player ->
       exoPlayer = null
       player.removeListener(this)
       player.clearVideoSurface()
       player.release()
     }
-
     _dataSource = null
-    _isMediaBound = false
-    _videoSizeFlow.value = null
-    _isRenderedFirstFrameFlow.value = false
-    setException(null)
+  }
+
+  /** 重置为空闲状态并清空当前媒体的尺寸、首帧与缓冲状态 */
+  private fun resetIdleStates() {
     _bufferStateFlow.value = ComposePlayerBufferState.None
     setPlayerState(ComposePlayerState.Idle)
-    notifyPositionChanged()
+    _videoSizeFlow.value = null
+    _isRenderedFirstFrameFlow.value = false
+    callback.onStateIdle()
   }
 
   /** 构建按需采样的播放进度冷流 */
@@ -293,10 +295,7 @@ internal class PlayerEngine(
 
     when (playbackState) {
       Player.STATE_IDLE -> {
-        setPlayerState(ComposePlayerState.Idle)
-        _videoSizeFlow.value = null
-        _isRenderedFirstFrameFlow.value = false
-        callback.onStateIdle()
+        resetIdleStates()
       }
       Player.STATE_READY -> {
         stopRetry()
@@ -340,12 +339,16 @@ internal class PlayerEngine(
   }
 
   override fun onPlayerError(error: PlaybackException) {
-    setException(error.toComposePlayerException())
-    callback.onPlayerError(error)
+    val exception = error.toComposePlayerException()
+    setException(exception)
+    callback.onPlayerError(exception)
   }
 
   interface Callback {
     fun createExoPlayer(context: Context): ExoPlayer
+    fun getPendingPositionMs(): Long? {
+      return null
+    }
     fun consumeStartPositionMs(): Long {
       return C.TIME_UNSET
     }
@@ -357,11 +360,11 @@ internal class PlayerEngine(
     fun onStateReady(player: ExoPlayer) {}
     fun onStateEnded(player: ExoPlayer)
     fun onTimelineOrMediaChanged(player: ExoPlayer) {}
-    fun onPlayerError(error: PlaybackException)
+    fun onPlayerError(error: ComposePlayerException)
   }
 }
 
-/** 提取 URI 中的用户名与密码并分别进行幂等百分比编码，兼容含 `@`、`#`、`?`、`/` 等特殊字符的密码 */
+/** 提取 URI 中的用户名与密码并分别进行幂等百分比编码，兼容含 `@`、`#`、`?`、`/`、`=` 等特殊字符的密码 */
 internal fun encodeUserInfoIfNeed(uri: String): String {
   if (uri.isEmpty()) return uri
 
@@ -378,15 +381,36 @@ internal fun encodeUserInfoIfNeed(uri: String): String {
   val atIndex = if ('@' in firstSegment) {
     val firstAtIndex = uri.lastIndexOf('@', startIndex = authorityEnd - 1)
     val candidateHostPort = uri.substring(firstAtIndex + 1, authorityEnd)
-    if (isLikelyCompleteHostPort(candidateHostPort)) {
-      firstAtIndex
-    } else {
-      val trailingAtIndex = findTruncatedUserInfoAtIndex(uri, startIndex = authorityEnd)
+    if (!isLikelyCompleteHostPort(candidateHostPort)) {
+      val trailingAtIndex = findTruncatedUserInfoAtIndex(
+        uri = uri,
+        startIndex = authorityEnd,
+        allowQueryEquals = true,
+        requireExplicitServerHost = false,
+      )
       if (trailingAtIndex >= 0) trailingAtIndex else firstAtIndex
+    } else if (authorityEnd < uri.length) {
+      val delimiter = uri[authorityEnd]
+      val trailingAtIndex = findTruncatedUserInfoAtIndex(
+        uri = uri,
+        startIndex = authorityEnd,
+        allowQueryEquals = false,
+        requireExplicitServerHost = delimiter != '#',
+      )
+      if (trailingAtIndex >= 0) trailingAtIndex else firstAtIndex
+    } else {
+      firstAtIndex
     }
   } else {
     if (!looksLikeTruncatedUserInfo(firstSegment)) return uri
-    findTruncatedUserInfoAtIndex(uri, startIndex = authorityEnd)
+    val firstIsValidHostPort = isValidHostPort(firstSegment)
+    val delimiter = if (authorityEnd < uri.length) uri[authorityEnd] else '\u0000'
+    findTruncatedUserInfoAtIndex(
+      uri = uri,
+      startIndex = authorityEnd,
+      allowQueryEquals = !firstIsValidHostPort,
+      requireExplicitServerHost = firstIsValidHostPort && delimiter != '#',
+    )
   }
   if (atIndex <= userInfoStart) return uri
 
@@ -415,23 +439,36 @@ internal fun encodeUserInfoIfNeed(uri: String): String {
 private fun looksLikeTruncatedUserInfo(segment: String): Boolean {
   if (segment.isEmpty() || segment.startsWith("[")) return false
   val colonIndex = segment.indexOf(':')
-  if (colonIndex <= 0) return false
-  return !isLikelyCompleteHostPort(segment)
+  return colonIndex > 0 && !isLikelyCompleteHostPort(segment)
 }
 
-/** 从截断偏移后逆向查找紧跟合法 `host[:port]` 的 `@` 分隔符下标，排除含参数赋值或嵌套协议的普通 URL */
-private fun findTruncatedUserInfoAtIndex(uri: String, startIndex: Int): Int {
+/** 从截断偏移后逆向查找紧跟合法 `host[:port]` 的 `@` 分隔符下标，排除普通路径邮箱、查询参数与嵌套协议 */
+private fun findTruncatedUserInfoAtIndex(
+  uri: String,
+  startIndex: Int,
+  allowQueryEquals: Boolean,
+  requireExplicitServerHost: Boolean,
+): Int {
   var searchFrom = uri.length - 1
   while (searchFrom >= startIndex) {
     val atIndex = uri.lastIndexOf('@', startIndex = searchFrom)
     if (atIndex < startIndex) return -1
 
     val middle = uri.substring(startIndex, atIndex)
-    if ("=" !in middle && "://" !in middle) {
+    val queryStart = middle.indexOf('?')
+    val hasDisallowedQueryEquals = !allowQueryEquals
+      && queryStart >= 0
+      && middle.indexOf('=', startIndex = queryStart + 1) >= 0
+    if (!hasDisallowedQueryEquals && "://" !in middle) {
       val hostEnd = uri.indexOfAny(charArrayOf('/', '?', '#'), startIndex = atIndex + 1)
         .let { if (it < 0) uri.length else it }
       val hostPort = uri.substring(atIndex + 1, hostEnd)
-      if (isValidHostPort(hostPort)) {
+      val hostValid = if (requireExplicitServerHost) {
+        isExplicitServerHostPort(hostPort)
+      } else {
+        isValidHostPort(hostPort)
+      }
+      if (hostValid) {
         return atIndex
       }
     }
@@ -448,30 +485,11 @@ private fun isLikelyCompleteHostPort(hostPort: String): Boolean {
   return '.' in host || host.equals("localhost", ignoreCase = true)
 }
 
-private fun isValidHostPort(hostPort: String): Boolean {
-  if (hostPort.isEmpty()) return false
-  if (hostPort.startsWith("[")) {
-    val closeBracket = hostPort.indexOf(']')
-    if (closeBracket <= 1) return false
-    if (closeBracket == hostPort.length - 1) return true
-    return hostPort[closeBracket + 1] == ':' && isValidPort(hostPort.substring(closeBracket + 2))
-  }
-
-  val colonIndex = hostPort.indexOf(':')
-  val host = if (colonIndex >= 0) hostPort.substring(0, colonIndex) else hostPort
-  if (host.isEmpty() || !host.all { it.isAsciiHostChar() }) return false
-
-  if (colonIndex >= 0) {
-    val portPart = hostPort.substring(colonIndex + 1)
-    if (!isValidPort(portPart)) return false
-  }
-  return true
-}
-
-private fun isValidPort(port: String): Boolean {
-  if (port.isEmpty() || port.length > 5 || !port.all { it in '0'..'9' }) return false
-  val value = port.toIntOrNull() ?: return false
-  return value in 1..65535
+/** 判断 URI 片段是否为明确的服务器端点（含显式端口、IPv6 字面量或 IPv4 地址） */
+private fun isExplicitServerHostPort(hostPort: String): Boolean {
+  if (!isValidHostPort(hostPort)) return false
+  if (hostPort.startsWith("[") || ':' in hostPort) return true
+  return isIpv4Address(hostPort)
 }
 
 /** 对凭据组件做幂等 RFC 3986 百分比编码，保留已有的合法 `%XX` 序列 */
@@ -506,6 +524,40 @@ private fun percentEncodeComponent(input: String): String {
     }
   }
   return out.toString()
+}
+
+private fun isValidHostPort(hostPort: String): Boolean {
+  if (hostPort.isEmpty()) return false
+  if (hostPort.startsWith("[")) {
+    val closeBracket = hostPort.indexOf(']')
+    if (closeBracket <= 1) return false
+    if (closeBracket == hostPort.length - 1) return true
+    return hostPort[closeBracket + 1] == ':' && isValidPort(hostPort.substring(closeBracket + 2))
+  }
+
+  val colonIndex = hostPort.indexOf(':')
+  val host = if (colonIndex >= 0) hostPort.substring(0, colonIndex) else hostPort
+  if (host.isEmpty() || !host.all { it.isAsciiHostChar() }) return false
+
+  if (colonIndex >= 0) {
+    val portPart = hostPort.substring(colonIndex + 1)
+    if (!isValidPort(portPart)) return false
+  }
+  return true
+}
+
+private fun isValidPort(port: String): Boolean {
+  if (port.isEmpty() || port.length > 5 || !port.all { it in '0'..'9' }) return false
+  val value = port.toIntOrNull() ?: return false
+  return value in 1..65535
+}
+
+private fun isIpv4Address(host: String): Boolean {
+  val parts = host.split('.')
+  if (parts.size != 4) return false
+  return parts.all { part ->
+    part.isNotEmpty() && part.length <= 3 && part.all { it in '0'..'9' } && (part.toIntOrNull() ?: -1) in 0..255
+  }
 }
 
 private fun Char.isUnreservedUriChar(): Boolean {

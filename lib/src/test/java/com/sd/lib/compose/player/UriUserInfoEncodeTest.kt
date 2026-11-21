@@ -53,6 +53,30 @@ class UriUserInfoEncodeTest {
       "rtsp://admin:p%40ss%23123@192.168.1.100:554/live",
       encodeUserInfoIfNeed("rtsp://admin:p@ss#123@192.168.1.100:554/live"),
     )
+    assertEquals(
+      "rtsp://admin:p%40a.b%231@192.168.1.100:554/live",
+      encodeUserInfoIfNeed("rtsp://admin:p@a.b#1@192.168.1.100:554/live"),
+    )
+    assertEquals(
+      "rtsp://admin:p%40a.b%2F1@192.168.1.100:554/live",
+      encodeUserInfoIfNeed("rtsp://admin:p@a.b/1@192.168.1.100:554/live"),
+    )
+  }
+
+  @Test
+  fun encodesEqualsWithDelimiterInPassword() {
+    assertEquals(
+      "rtsp://admin:pass%23a%3Db@192.168.1.100:554/live",
+      encodeUserInfoIfNeed("rtsp://admin:pass#a=b@192.168.1.100:554/live"),
+    )
+    assertEquals(
+      "rtsp://admin:pass%2Fa%3Db@192.168.1.100:554/live",
+      encodeUserInfoIfNeed("rtsp://admin:pass/a=b@192.168.1.100:554/live"),
+    )
+    assertEquals(
+      "rtsp://admin:pass%3Fa%3Db@192.168.1.100:554/live",
+      encodeUserInfoIfNeed("rtsp://admin:pass?a=b@192.168.1.100:554/live"),
+    )
   }
 
   @Test
@@ -79,6 +103,9 @@ class UriUserInfoEncodeTest {
 
     val localhostWithEmailInPath = "http://localhost:8080/users/test@domain.com/video.mp4"
     assertEquals(localhostWithEmailInPath, encodeUserInfoIfNeed(localhostWithEmailInPath))
+
+    val intranetPathWithEmail = "http://intranet:8080/users/test@domain.com/video.mp4"
+    assertEquals(intranetPathWithEmail, encodeUserInfoIfNeed(intranetPathWithEmail))
 
     val intranetQueryWithEmail = "http://intranet:8080/play?mail=test@domain.com"
     assertEquals(intranetQueryWithEmail, encodeUserInfoIfNeed(intranetQueryWithEmail))

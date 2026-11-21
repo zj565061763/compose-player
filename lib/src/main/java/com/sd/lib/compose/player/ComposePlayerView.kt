@@ -7,6 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -45,7 +46,7 @@ fun ComposePlayerView(
   ) {
     if (LocalInspectionMode.current) return@Box
 
-    val exoPlayer = (player as? PlayerEngineOwner)?.engine?.exoPlayer
+    val exoPlayer = (player as? BaseComposePlayer)?.engine?.exoPlayer
     val presentationState = rememberPresentationState(exoPlayer)
 
     key(rebindKeyProvider()) {
@@ -70,9 +71,15 @@ fun ComposePlayerView(
 @Composable
 fun composePlayerViewRebindKeyOnResume(key: Any? = Unit): Any {
   var resumeCount by remember(key) { mutableIntStateOf(0) }
+  var hasPaused by remember(key) { mutableStateOf(false) }
   LifecycleResumeEffect(key) {
-    resumeCount++
-    onPauseOrDispose {}
+    if (hasPaused) {
+      hasPaused = false
+      resumeCount++
+    }
+    onPauseOrDispose {
+      hasPaused = true
+    }
   }
   return resumeCount
 }
