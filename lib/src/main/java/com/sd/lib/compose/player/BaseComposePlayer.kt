@@ -5,10 +5,12 @@ import androidx.annotation.OptIn
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Size
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.CoroutineScope
@@ -42,6 +44,8 @@ internal abstract class BaseComposePlayer(
   private val rebindMediaOnIdle: Boolean = false,
 ) : ComposePlayerCore {
   var exoPlayer by mutableStateOf<ExoPlayer?>(null)
+    private set
+  var videoSizeDp by mutableStateOf<Size?>(null)
     private set
 
   protected val mainScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -100,9 +104,9 @@ internal abstract class BaseComposePlayer(
           }
           syncStates(player, events)
           val exception = error.toComposePlayerException()
-          setException(exception)
           handlePlayerError(exception)
           notifyPositionChanged()
+          setException(exception)
           return
         }
       }
@@ -177,8 +181,8 @@ internal abstract class BaseComposePlayer(
     val dataSource = _dataSource ?: return null
     if (dataSource.isBlank()) {
       val exception = ComposePlayerException.DataSourceBlank()
-      setException(exception)
       handlePlayerError(exception)
+      setException(exception)
       return null
     }
 
@@ -193,8 +197,8 @@ internal abstract class BaseComposePlayer(
         encodeUserInfoIfNeed(dataSource).also { validateEncodedUri(it) }
       }.getOrElse { e ->
         val exception = ComposePlayerException.DataSource(cause = e)
-        setException(exception)
         handlePlayerError(exception)
+        setException(exception)
         return null
       }
     } else {
@@ -225,8 +229,8 @@ internal abstract class BaseComposePlayer(
         _isRenderedFirstFrameFlow.value = false
       }.onFailure { e ->
         val exception = ComposePlayerException.DataSource(cause = e)
-        setException(exception)
         handlePlayerError(exception)
+        setException(exception)
         return null
       }
     } else if (_pendingSeekToDefaultPosition) {
@@ -329,13 +333,16 @@ internal abstract class BaseComposePlayer(
 
     if (playbackState == Player.STATE_IDLE) {
       _videoSizeFlow.value = null
+      videoSizeDp = null
       _isRenderedFirstFrameFlow.value = false
     } else if (boundPlayer != null) {
       val videoSize = boundPlayer.videoSize
-      _videoSizeFlow.value = if (videoSize.width > 0 && videoSize.height > 0) {
-        Pair(videoSize.width, videoSize.height)
+      if (videoSize.width > 0 && videoSize.height > 0) {
+        _videoSizeFlow.value = Pair(videoSize.width, videoSize.height)
+        videoSizeDp = videoSize.toComposeSizeDp()
       } else {
-        null
+        _videoSizeFlow.value = null
+        videoSizeDp = null
       }
       if (events?.contains(Player.EVENT_RENDERED_FIRST_FRAME) == true) {
         _isRenderedFirstFrameFlow.value = true
@@ -378,4 +385,19 @@ internal abstract class BaseComposePlayer(
     previousState: ComposePlayerState,
     newState: ComposePlayerState,
   ) {}
+}
+
+/** 将 [VideoSize] 按像素宽高比折算为 Compose 尺寸 */
+private fun VideoSize.toComposeSizeDp(): Size? {
+  if (width <= 0 || height <= 0) return null
+  var size = Size(width.toFloat(), height.toFloat())
+  val par = pixelWidthHeightRatio
+  if (par > 0f && par.isFinite()) {
+    if (par < 1f) {
+      size = size.copy(width = size.width * par)
+    } else if (par > 1f) {
+      size = size.copy(height = size.height / par)
+    }
+  }
+  return size
 }

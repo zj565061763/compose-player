@@ -19,7 +19,23 @@ internal fun encodeUserInfoIfNeed(uri: String): String {
   val atIndex = if ('@' in firstSegment) {
     val firstAtIndex = uri.lastIndexOf('@', startIndex = authorityEnd - 1)
     val candidateHostPort = uri.substring(firstAtIndex + 1, authorityEnd)
-    if (!isLikelyCompleteHostPort(candidateHostPort)) {
+    if (isExplicitServerHostPort(candidateHostPort)) {
+      firstAtIndex
+    } else if (isLikelyCompleteHostPort(candidateHostPort)) {
+      if (authorityEnd < uri.length) {
+        val trailingAtIndex = findTruncatedUserInfoAtIndex(
+          uri = uri,
+          startIndex = authorityEnd,
+          allowQueryEquals = false,
+          requireExplicitServerHost = true,
+          allowNestedPathSlashes = false,
+          requireColonInMiddle = false,
+        )
+        if (trailingAtIndex >= 0) trailingAtIndex else firstAtIndex
+      } else {
+        firstAtIndex
+      }
+    } else {
       val trailingAtIndex = findTruncatedUserInfoAtIndex(
         uri = uri,
         startIndex = authorityEnd,
@@ -29,18 +45,6 @@ internal fun encodeUserInfoIfNeed(uri: String): String {
         requireColonInMiddle = false,
       )
       if (trailingAtIndex >= 0) trailingAtIndex else firstAtIndex
-    } else if (authorityEnd < uri.length && !isExplicitServerHostPort(candidateHostPort)) {
-      val trailingAtIndex = findTruncatedUserInfoAtIndex(
-        uri = uri,
-        startIndex = authorityEnd,
-        allowQueryEquals = false,
-        requireExplicitServerHost = true,
-        allowNestedPathSlashes = false,
-        requireColonInMiddle = false,
-      )
-      if (trailingAtIndex >= 0) trailingAtIndex else firstAtIndex
-    } else {
-      firstAtIndex
     }
   } else {
     if (!canBeTruncatedUserInfoPrefix(firstSegment)) return uri

@@ -10,6 +10,7 @@ import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -279,15 +280,37 @@ class ComposePlayerRtspTest {
         runCurrent()
         assertEquals(1.2f, controller.playbackParameters.speed)
 
-        // 介于 [chaseLatency / 2, chaseLatency] 滞回区间保持当前倍速
+        // 介于 (chaseLatency / 2, chaseLatency] 滞回区间保持当前倍速
         controller.currentPosition = 1_150L
         advanceRealtimeAndCoroutines(stepMs = 100L)
         assertEquals(1.2f, controller.playbackParameters.speed)
 
-        // 回落至 chaseLatency / 2 (100ms) 以下恢复 1.0f
-        controller.currentPosition = 1_250L
+        // 回落至 chaseLatency / 2 (100ms) 及以下恢复 1.0f
+        controller.currentPosition = 1_200L
         advanceRealtimeAndCoroutines(stepMs = 100L)
         assertEquals(1.0f, controller.playbackParameters.speed)
+      }
+
+      // chaseLatency == 1ms 边界下追平至 0ms 仍可正常恢复 1.0f
+      val minLatencyController = FakeExoPlayerController()
+      newRtspPlayer(
+        context = context,
+        stuckPositionInterval = 0L,
+        stuckRenderedFrameInterval = 0L,
+        chaseLatency = 1L,
+        playerProvider = { minLatencyController },
+      ).usePlayer { player ->
+        player.setDataSource("rtsp://192.168.1.100:554/live")
+        player.play()
+        minLatencyController.moveToReady()
+        minLatencyController.currentPosition = 1_000L
+        minLatencyController.bufferedPosition = 1_005L
+        runCurrent()
+        assertEquals(1.2f, minLatencyController.playbackParameters.speed)
+
+        minLatencyController.currentPosition = 1_005L
+        advanceRealtimeAndCoroutines(stepMs = 100L)
+        assertEquals(1.0f, minLatencyController.playbackParameters.speed)
       }
     }
   }
@@ -323,6 +346,46 @@ class ComposePlayerRtspTest {
         advanceTimeBy(10.seconds)
         runCurrent()
         assertEquals(2, controller.setMediaItemCount)
+      }
+    }
+  }
+
+  @Test
+  fun synchronousExceptionCollectorCanImmediatelyRestartStreamWithoutBeingStopped() {
+    runTest(mainDispatcherRule.testDispatcher) {
+      val context = ApplicationProvider.getApplicationContext<Context>()
+      val controller = FakeExoPlayerController()
+      newRtspPlayer(
+        context = context,
+        retryOnErrorInterval = 0L,
+        playerProvider = { controller },
+      ).usePlayer { player ->
+        var handledAuth = false
+        val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+          player.exceptionFlow.collect { error ->
+            if (error is ComposePlayerException.Auth && !handledAuth) {
+              handledAuth = true
+              player.setDataSource("rtsp://admin:newpass@192.168.1.100:554/live")
+              player.play()
+            }
+          }
+        }
+
+        player.setDataSource("rtsp://admin:oldpass@192.168.1.100:554/live")
+        player.play()
+        runCurrent()
+        assertEquals(1, controller.setMediaItemCount)
+
+        controller.failWith(
+          newTestPlaybackException(cause = RtspMediaSource.RtspPlaybackException("DESCRIBE 401")),
+        )
+        assertTrue(handledAuth)
+        assertEquals(2, controller.setMediaItemCount)
+        controller.moveToReady()
+        runCurrent()
+        assertEquals(ComposePlayerState.Playing, player.playerStateFlow.value)
+
+        collector.cancel()
       }
     }
   }

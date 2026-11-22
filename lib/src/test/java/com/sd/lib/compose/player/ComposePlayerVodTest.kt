@@ -1,12 +1,14 @@
 package com.sd.lib.compose.player
 
 import android.content.Context
+import androidx.compose.ui.geometry.Size
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -174,6 +176,13 @@ class ComposePlayerVodTest {
       assertEquals(ComposePlayerBufferState.Ready, player.bufferStateFlow.value)
       assertEquals(12_000L, player.durationFlow.value)
       assertEquals(Pair(1920, 1080), player.videoSizeFlow.value)
+      assertTrue(player.videoSizeDp == Size(1920f, 1080f))
+
+      // 验证非正方形像素宽高比（pixelWidthHeightRatio）同步折算为 videoSizeDp
+      controller.moveToReady(durationMs = 12_000L, size = VideoSize(1440, 1080, 1.5f))
+      assertTrue(player.videoSizeDp == Size(1440f, 720f))
+      controller.moveToReady(durationMs = 12_000L, size = VideoSize(1920, 1080, 0.5f))
+      assertTrue(player.videoSizeDp == Size(960f, 1080f))
 
       // 播放中调用 prepare 不打断播放
       player.play()
@@ -401,6 +410,7 @@ class ComposePlayerVodTest {
         assertEquals(ComposePlayerState.Idle, observedStateAtError)
         assertEquals(ComposePlayerBufferState.None, observedBufferAtError)
         assertNull(observedSizeAtError)
+        assertNull(player.videoSizeDp)
         assertFalse(observedFirstFrameAtError)
         assertEquals(0, controller.seekToDefaultPositionCount)
 
@@ -469,6 +479,45 @@ class ComposePlayerVodTest {
       player.play()
       assertEquals(2, createdCount)
       assertNotNull(player.exoPlayer)
+    }
+  }
+
+  @Test
+  fun synchronousExceptionCollectorCanImmediatelyRestartPlaybackWithoutBeingOverwritten() {
+    runTest(mainDispatcherRule.testDispatcher) {
+      val context = ApplicationProvider.getApplicationContext<Context>()
+      val controller = FakeExoPlayerController()
+      VodPlayerImpl(
+        context = context,
+        retryOnErrorInterval = 0L,
+        playerProvider = { controller.exoPlayer },
+      ).usePlayer { player ->
+        var handledAuth = false
+        val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+          player.exceptionFlow.collect { error ->
+            if (error is ComposePlayerException.Auth && !handledAuth) {
+              handledAuth = true
+              player.setDataSource("https://example.com/refreshed_token.mp4")
+              player.play()
+            }
+          }
+        }
+
+        player.setDataSource("https://example.com/expired_token.mp4")
+        player.play()
+        controller.moveToReady(durationMs = 10_000L)
+
+        // 触发鉴权错误时，同步收集器立即切源并调用 play()，新播放意图不应被后续错误处理覆盖
+        controller.failWith(newTestPlaybackException(cause = newTestHttpResponseException(401)))
+        assertTrue(handledAuth)
+        assertEquals(2, controller.setMediaItemCount)
+        assertTrue(controller.playWhenReady)
+
+        controller.moveToReady(durationMs = 10_000L)
+        assertEquals(ComposePlayerState.Playing, player.playerStateFlow.value)
+
+        collector.cancel()
+      }
     }
   }
 }

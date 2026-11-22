@@ -147,6 +147,18 @@ class UriUserInfoEncodeTest {
     val explicitServerAndPathWithIp = "https://user:pass@192.168.1.1:8080/cam@192.168.1.100/live.mp4"
     assertEquals(explicitServerAndPathWithIp, encodeUserInfoIfNeed(explicitServerAndPathWithIp))
 
+    val intranetWithCredsAndEmailInPath = "http://admin:pass@intranet:8080/users/test@domain.com/video.mp4"
+    assertEquals(intranetWithCredsAndEmailInPath, encodeUserInfoIfNeed(intranetWithCredsAndEmailInPath))
+
+    val rtspIntranetWithCredsAndProxyIp = "rtsp://admin:pass@camera01:554/proxy/cam@192.168.1.100/live"
+    assertEquals(rtspIntranetWithCredsAndProxyIp, encodeUserInfoIfNeed(rtspIntranetWithCredsAndProxyIp))
+
+    val intranetWithSpecialPasswordAndEmailInPath = "http://admin:p@ss@intranet:8080/users/test@domain.com/video.mp4"
+    assertEquals(
+      "http://admin:p%40ss@intranet:8080/users/test@domain.com/video.mp4",
+      encodeUserInfoIfNeed(intranetWithSpecialPasswordAndEmailInPath),
+    )
+
     val credentialsAndEmailInPath = "https://admin:p@ss@example.com/users/test@domain.com/video.mp4"
     assertEquals(
       "https://admin:p%40ss@example.com/users/test@domain.com/video.mp4",

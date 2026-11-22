@@ -39,19 +39,19 @@
 | `PlayerExtTest` | `newMediaAudioAttributes` 默认媒体音频属性构建，以及 `extSetMute`、`extSetSpeed`、`extSetLooping` 的状态同步与幂等去重 |
 | `ComposePlayerCacheTest` | `ComposePlayerCache.create` 非正容量参数校验、`getDefault` 单例复用，以及等价规范目录路径共享同一底层 `SimpleCache` 实例 |
 | `ComposePlayerCoreFlowTest` | `positionFlow` 非正间隔兜底、播放态按需轮询、非播放态挂起、跳转与不连续事件立即发射、重复位置去重，以及 `awaitPlayerState`、`awaitBufferReady`、`awaitRenderedFirstFrame`、`awaitDuration` 挂起等待扩展 |
-| `ComposePlayerVodTest` | `VodPlayerImpl` 延迟初始化与预设属性继承、`setSpeed` 参数校验、空白/重复数据源处理、`prepare` 预加载与报错期切换、切源延迟起播与同帧 `seekTo`/`prepare`/`pause` 覆盖、`seekTo`/`seekDelta` 裁剪与片尾回退重播、短暂音频抑制与焦点丢失、错误复位时序、`BEHIND_LIVE_WINDOW` 恢复、自动重试与鉴权停试、Raw 资源绑定与 `release` 复用 |
-| `ComposePlayerRtspTest` | `RtspPlayerImpl` 协议前置校验、`Idle`/`Playing` 状态流转、流结束重拉、被动失去 `playWhenReady` 停止、短暂音频抑制看门狗启停与延迟超限重拉、连接期放宽阈值与播放期 `StuckPosition`、有效表面 `StuckRenderedFrame`、倍速追帧滞回恢复、重绑重试与鉴权停试 |
+| `ComposePlayerVodTest` | `VodPlayerImpl` 延迟初始化与预设属性继承、`setSpeed` 参数校验、空白/重复数据源处理、`prepare` 预加载与 `videoSizeDp` 像素宽高比折算、报错期切换、切源延迟起播与同帧 `seekTo`/`prepare`/`pause` 覆盖、`seekTo`/`seekDelta` 裁剪与片尾回退重播、短暂音频抑制与焦点丢失、错误复位与同步重入时序、`BEHIND_LIVE_WINDOW` 恢复、自动重试与鉴权停试、Raw 资源绑定与 `release` 复用 |
+| `ComposePlayerRtspTest` | `RtspPlayerImpl` 协议前置校验、`Idle`/`Playing` 状态流转、流结束重拉、被动失去 `playWhenReady` 停止、短暂音频抑制看门狗启停与延迟超限重拉、连接期放宽阈值与播放期 `StuckPosition`、有效表面 `StuckRenderedFrame`、倍速追帧滞回与最小阈值恢复、重绑重试、鉴权停试与异常同步重入重连 |
 
 ## 内部实现约定
 
 ### 公共宿主基类（`BaseComposePlayer`）
 
-- `exoPlayer` 使用 Compose `mutableStateOf<ExoPlayer?>(null)` 持有，首次调用 `preparePlayer()` 且数据源校验通过时才创建实例，供 `ComposePlayerView` 响应式感知底层实例变化。
+- `exoPlayer` 与 `videoSizeDp` 使用 Compose `mutableStateOf` 持有，首次调用 `preparePlayer()` 且数据源校验通过时才创建底层实例，并在 `syncStates` 中按像素宽高比同步折算源尺寸，供 `ComposePlayerView` 首帧零延迟感知实例与宽高比变化。
 - `mainScope` 基于 `SupervisorJob() + Dispatchers.Main.immediate` 承载主线程错误重试与子类异步任务，`releasePlayer()` 时取消子协程并保持作用域可复用。
-- `composePlayerViewRebindKeyOnResume` 仅在经历过 `onPause` 后恢复 `onResume` 时递增重绑键值，避免首次组合重复重建表面；`ComposePlayerView` 基于 `isRenderedFirstFrameFlow` 控制表面透明度并在 `videoSizeFlow` 清空时复位源尺寸，避免停止或切源缓冲期间残留旧画面与旧宽高比。
+- `composePlayerViewRebindKeyOnResume` 仅在经历过 `onPause` 后恢复 `onResume` 时递增重绑键值，避免首次组合重复重建表面；`ComposePlayerView` 基于 `isRenderedFirstFrameFlow` 控制表面透明度并直接读取 `BaseComposePlayer.videoSizeDp`，避免跨页面首帧比例闪烁及停止或切源缓冲期间残留旧画面与旧宽高比。
 - `_isMediaBound` 跟踪当前数据源是否已绑定到底层 `ExoPlayer`：点播（`rebindMediaOnIdle = false`）在中途网络报错进入 `Player.STATE_IDLE` 后重试仅调用 `player.prepare()` 保留断点（遇到 `ERROR_CODE_BEHIND_LIVE_WINDOW` 时标记并在下次 `prepare()` 前调用 `seekToDefaultPosition()`），仅在切换数据源、`stopPlayer()` 或 `releasePlayer()` 后重新绑定媒体项；直播（`rebindMediaOnIdle = true`）每次重连重新调用 `setMediaItem` 由 `RtspMediaSource.Factory` 重建数据源。
 - `startPlayer()` 在底层处于 `Player.STATE_ENDED` 或当前进度已达已知总时长末尾时先执行 `seekTo(0)` 再播放。
-- `Player.Listener.onEvents` 在单次事件批次末尾通过 `syncStates` 与子类纯计算函数 `computePlayerState` 统一派生缓冲态、视频分辨率、首帧标记与播放态；发生播放错误时先复位空闲状态再发射 `exceptionFlow`，消除瞬态状态矛盾。
+- `Player.Listener.onEvents` 在单次事件批次末尾通过 `syncStates` 与子类纯计算函数 `computePlayerState` 统一派生缓冲态、视频分辨率、首帧标记与播放态；发生异常时先复位状态并完成子类错误处理，最后发射 `exceptionFlow`，避免瞬态状态矛盾与同步收集器重入被覆盖。
 - `preparePlayer()` 的空白/非法数据源异常与播放错误均转换为 `ComposePlayerException` 后分发子类，仅 `ComposePlayerException.Playback` 允许自动重试，其余异常立即复位播放意图。
 - `encodeUserInfoIfNeed` 基于 RFC 3986 直接解析原始字符串中的用户名与密码并做幂等百分比编码，兼容含 `@`、`:`、`#`、`?`、`/`、`=`、`%` 及数字或含点前缀截断等凭据，并排除路径层级、查询参数与锚点片段中的 `@` 字符。
 - `isAuthError` 按异常类型精确识别 `HttpDataSource.InvalidResponseCodeException`（状态码 `401`、`403`）、`RtspMediaSource.RtspPlaybackException`（`METHOD 401/403` 状态行）与鉴权头缺失的 `ParserException`，不对通用异常消息做裸子串匹配。
@@ -74,7 +74,7 @@
 - 继承 `BaseComposePlayer`，通过 `_isPlayingRequested` 管理拉流意图（状态流仅在 `Idle` 与 `Playing` 间流转），前置通过 `isValidRtspUri` 校验 `rtsp`/`rtspt` 协议与主机端口。
 - 被动永久失去 `playWhenReady` 时执行 `stop()`；短暂音频抑制期间自动将输出态置回 `Idle` 并停止看门狗，抑制解除时若处于 `STATE_READY` 且累积缓冲延迟超限则调用 `restartPlay()` 追回实时画面，否则自动恢复看门狗；播放请求下流结束（`onStateEnded`）时调用 `restartPlay()` 重新拉流。
 - `ComposePlayerRtsp.create` 将小于等于 0 的 `timeoutMs` 归一化为 `RtspMediaSource.DEFAULT_TIMEOUT_MS`（`8000ms`），`newLivePlayer` 将 `DefaultLoadControl` 设为最小缓冲 32ms、起播与恢复缓冲 0ms、无后置缓冲，并通过 `DefaultRenderersFactory.setAllowedVideoJoiningTimeMs(0L)` 降低首帧拼接延迟。
-- `syncWatchdog` 在拉流绑定且无音频抑制的缓冲或播放阶段自动在 `mainScope` 上维护看门狗协程 `_watchdogJob`（连接与初始缓冲阶段将进度停滞阈值放宽至 `timeoutMs + 2000ms` 之后以避免打断底层超时报错，切入 `Playing` 时刷新基准时间），脱离上述状态时立即取消协程并将倍速恢复为 `1.0f`；进度停滞或播放态绑定有效渲染表面下的渲染帧停滞超时后向 `eventFlow` 发射 `ComposePlayerRtspEvent` 并调用 `restartPlay()`；当缓冲差大于 `chaseLatency` 时以 `1.2f` 倍速追帧，回落至 `chaseLatency / 2` 以下时恢复为 `1.0f`。
+- `syncWatchdog` 在拉流绑定且无音频抑制的缓冲或播放阶段自动在 `mainScope` 上维护看门狗协程 `_watchdogJob`（连接与初始缓冲阶段将进度停滞阈值放宽至 `timeoutMs + 2000ms` 之后以避免打断底层超时报错，切入 `Playing` 时刷新基准时间），脱离上述状态时立即取消协程并将倍速恢复为 `1.0f`；进度停滞或播放态绑定有效渲染表面下的渲染帧停滞超时后向 `eventFlow` 发射 `ComposePlayerRtspEvent` 并调用 `restartPlay()`；当缓冲差大于 `chaseLatency` 时以 `1.2f` 倍速追帧，回落至 `chaseLatency / 2` 及以下时恢复为 `1.0f`。
 
 ## 修改约束
 

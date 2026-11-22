@@ -367,7 +367,7 @@ internal class RtspPlayerImpl(
         val drift = bufferedPosition - currentPosition
         if (drift > chaseLatency) {
           player.extSetSpeed(1.2f)
-        } else if (drift < (chaseLatency / 2)) {
+        } else if (drift <= chaseLatency / 2) {
           player.extSetSpeed(1.0f)
         }
       }

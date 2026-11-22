@@ -22,7 +22,6 @@ import androidx.media3.ui.compose.PlayerSurface
 import androidx.media3.ui.compose.SURFACE_TYPE_SURFACE_VIEW
 import androidx.media3.ui.compose.SURFACE_TYPE_TEXTURE_VIEW
 import androidx.media3.ui.compose.modifiers.resizeWithContentScale
-import androidx.media3.ui.compose.state.rememberPresentationState
 
 /**
  * 播放器视频渲染组件
@@ -48,11 +47,10 @@ fun ComposePlayerView(
   ) {
     if (LocalInspectionMode.current) return@Box
 
-    val exoPlayer = (player as? BaseComposePlayer)?.exoPlayer
+    val basePlayer = player as? BaseComposePlayer
+    val exoPlayer = basePlayer?.exoPlayer
+    val sourceSizeDp = basePlayer?.videoSizeDp
     val isRenderedFirstFrame by player.isRenderedFirstFrameFlow.collectAsState()
-    val videoSize by player.videoSizeFlow.collectAsState()
-    val presentationState = rememberPresentationState(exoPlayer)
-    val sourceSizeDp = if (videoSize != null) presentationState.videoSizeDp else null
 
     key(rebindKeyProvider()) {
       PlayerSurface(
