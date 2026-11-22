@@ -16,13 +16,20 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.shadows.ShadowSystemClock
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.net.SocketAddress
+import java.net.SocketTimeoutException
 import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -454,6 +461,67 @@ class ComposePlayerRtspTest {
         collector.cancel()
       }
     }
+  }
+
+  @Test
+  fun timeoutSocketFactoryAppliesConnectTimeoutAndClosesSocketOnFailure() {
+    var activeSocket: FakeSocket? = null
+    val factory = TimeoutSocketFactory(
+      connectTimeoutMs = 3_500,
+      socketProvider = { FakeSocket(failOnConnect = false).also { activeSocket = it } },
+    )
+
+    val connected = factory.createSocket(
+      "192.168.1.100",
+      554,
+      InetAddress.getByName("127.0.0.1"),
+      12345,
+    )
+    val recorded = connected as FakeSocket
+    assertEquals(3_500, recorded.connectedTimeoutMs)
+    assertEquals(554, (recorded.connectedEndpoint as InetSocketAddress).port)
+    assertEquals(12345, (recorded.boundEndpoint as InetSocketAddress).port)
+    assertFalse(recorded.wasClosed)
+
+    val failingFactory = TimeoutSocketFactory(
+      connectTimeoutMs = 2_000,
+      socketProvider = { FakeSocket(failOnConnect = true).also { activeSocket = it } },
+    )
+    assertThrows(SocketTimeoutException::class.java) {
+      failingFactory.createSocket("192.168.1.100", 554)
+    }
+    assertEquals(2_000, activeSocket?.connectedTimeoutMs)
+    assertTrue(activeSocket?.wasClosed == true)
+  }
+}
+
+private class FakeSocket(
+  private val failOnConnect: Boolean,
+) : Socket() {
+  var boundEndpoint: SocketAddress? = null
+    private set
+  var connectedEndpoint: SocketAddress? = null
+    private set
+  var connectedTimeoutMs: Int = -1
+    private set
+  var wasClosed: Boolean = false
+    private set
+
+  override fun bind(bindpoint: SocketAddress?) {
+    boundEndpoint = bindpoint
+  }
+
+  override fun connect(endpoint: SocketAddress?, timeout: Int) {
+    connectedEndpoint = endpoint
+    connectedTimeoutMs = timeout
+    if (failOnConnect) {
+      throw SocketTimeoutException("connect timed out")
+    }
+  }
+
+  override fun close() {
+    wasClosed = true
+    super.close()
   }
 }
 

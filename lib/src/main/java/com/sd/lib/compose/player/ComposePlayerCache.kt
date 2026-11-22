@@ -51,10 +51,10 @@ class ComposePlayerCache private constructor(
     }
 
     /**
-     * 获取或创建指定目录的缓存实例，同一规范路径共享同一底层实例并复用首次创建时的[maxBytes]
+     * 获取或创建指定专用目录的缓存实例（目录内非缓存文件会被清理），同一规范路径共享同一底层实例并复用首次创建时的[maxBytes]
      *
      * @param context 上下文
-     * @param directory 缓存目录
+     * @param directory 专用缓存目录，请勿直接传入 `cacheDir` 等共享根目录
      * @param maxBytes 最大缓存字节数，默认 1GB
      */
     fun create(

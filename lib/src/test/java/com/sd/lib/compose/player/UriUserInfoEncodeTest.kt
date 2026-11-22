@@ -121,6 +121,9 @@ class UriUserInfoEncodeTest {
     val intranetPathWithEmail = "http://intranet:8080/users/test@domain.com/video.mp4"
     assertEquals(intranetPathWithEmail, encodeUserInfoIfNeed(intranetPathWithEmail))
 
+    val intranetProxyPathWithIp = "http://intranet/proxy/cam@192.0.2.10/video.mp4"
+    assertEquals(intranetProxyPathWithIp, encodeUserInfoIfNeed(intranetProxyPathWithIp))
+
     val credentialsAndFragmentWithAt = "https://user:pass@example.com#chapter@section"
     assertEquals(credentialsAndFragmentWithAt, encodeUserInfoIfNeed(credentialsAndFragmentWithAt))
 
@@ -136,6 +139,19 @@ class UriUserInfoEncodeTest {
       encodeUserInfoIfNeed(credentialsAndEmailInPath),
     )
 
+    assertEquals(
+      "rtsp://admin:pa%23ss@camera.example.com/live",
+      encodeUserInfoIfNeed("rtsp://admin:pa#ss@camera.example.com/live"),
+    )
+    assertEquals(
+      "rtsp://admin:pass%2F123@camera_01.local/live",
+      encodeUserInfoIfNeed("rtsp://admin:pass/123@camera_01.local/live"),
+    )
+    assertEquals(
+      "rtsp://admin:p%40ss%3Aabc%23123@camera.example.com/live",
+      encodeUserInfoIfNeed("rtsp://admin:p@ss:abc#123@camera.example.com/live"),
+    )
+
     val localFileWithAt = "file:///storage/emulated/0/dir@name/demo.mp4"
     assertEquals(localFileWithAt, encodeUserInfoIfNeed(localFileWithAt))
   }
@@ -147,6 +163,7 @@ class UriUserInfoEncodeTest {
     assertTrue(isValidRtspUri(encodeUserInfoIfNeed("RTSP://[::1]:8554/live")))
     assertTrue(isValidRtspUri(encodeUserInfoIfNeed("rtsp://[fe80::1:2]/live")))
     assertTrue(isValidRtspUri(encodeUserInfoIfNeed("rtsp://admin:p@ss#123@192.168.1.100:554/live")))
+    assertTrue(isValidRtspUri(encodeUserInfoIfNeed("rtsp://admin:pa#ss@camera.example.com/live")))
     assertTrue(isValidRtspUri(encodeUserInfoIfNeed("rtsp://user#1:pass@192.168.1.100:554/live")))
 
     assertFalse(isValidRtspUri(""))

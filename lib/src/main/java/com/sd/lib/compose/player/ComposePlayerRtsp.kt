@@ -24,6 +24,10 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Socket
+import javax.net.SocketFactory
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -57,7 +61,7 @@ sealed interface ComposePlayerRtsp : ComposePlayerCore {
      * @param stuckRenderedFrameInterval 渲染帧卡住检测间隔（毫秒），大于 0 时生效
      * @param retryOnErrorInterval 播放错误自动重试间隔（毫秒），小于等于 0 时不重试
      * @param chaseLatency 追帧延迟阈值（毫秒），大于 0 时生效
-     * @param timeoutMs RTSP 无数据包超时时间（毫秒），小于等于 0 时使用默认值 8000ms
+     * @param timeoutMs RTSP 连接与无数据包超时时间（毫秒），小于等于 0 时使用默认值 8000ms
      */
     @SuppressLint("UnsafeOptInUsageError")
     fun create(
@@ -73,9 +77,11 @@ sealed interface ComposePlayerRtsp : ComposePlayerCore {
     ): ComposePlayerRtsp {
       val appContext = context.applicationContext
       val effectiveTimeoutMs = if (timeoutMs > 0) timeoutMs else RtspMediaSource.DEFAULT_TIMEOUT_MS
+      val connectTimeoutMs = effectiveTimeoutMs.coerceIn(1L, Int.MAX_VALUE.toLong()).toInt()
       val rtspSourceFactory = RtspMediaSource.Factory()
         .setForceUseRtpTcp(forceUseRtpTcp)
         .setTimeoutMs(effectiveTimeoutMs)
+        .setSocketFactory(TimeoutSocketFactory(connectTimeoutMs))
 
       return RtspPlayerImpl(
         context = appContext,
@@ -376,6 +382,59 @@ internal class RtspPlayerImpl(
       _watchdogJob = null
       job.cancel()
       exoPlayer?.extSetSpeed(1.0f)
+    }
+  }
+}
+
+/** 带 TCP 建连超时的 [SocketFactory] */
+internal class TimeoutSocketFactory(
+  private val connectTimeoutMs: Int,
+  private val socketProvider: () -> Socket = { Socket() },
+) : SocketFactory() {
+  override fun createSocket(): Socket {
+    return socketProvider()
+  }
+
+  override fun createSocket(host: String, port: Int): Socket {
+    return connectSocket(InetSocketAddress(host, port), null)
+  }
+
+  override fun createSocket(
+    host: String,
+    port: Int,
+    localHost: InetAddress,
+    localPort: Int,
+  ): Socket {
+    return connectSocket(InetSocketAddress(host, port), InetSocketAddress(localHost, localPort))
+  }
+
+  override fun createSocket(host: InetAddress, port: Int): Socket {
+    return connectSocket(InetSocketAddress(host, port), null)
+  }
+
+  override fun createSocket(
+    address: InetAddress,
+    port: Int,
+    localAddress: InetAddress,
+    localPort: Int,
+  ): Socket {
+    return connectSocket(InetSocketAddress(address, port), InetSocketAddress(localAddress, localPort))
+  }
+
+  private fun connectSocket(
+    remoteAddress: InetSocketAddress,
+    localAddress: InetSocketAddress?,
+  ): Socket {
+    val socket = socketProvider()
+    try {
+      if (localAddress != null) {
+        socket.bind(localAddress)
+      }
+      socket.connect(remoteAddress, connectTimeoutMs)
+      return socket
+    } catch (e: Throwable) {
+      runCatching { socket.close() }
+      throw e
     }
   }
 }

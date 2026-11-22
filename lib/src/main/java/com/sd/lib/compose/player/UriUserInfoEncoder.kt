@@ -23,6 +23,7 @@ internal fun encodeUserInfoIfNeed(uri: String): String {
     uri = uri,
     startIndex = userInfoStart,
     authorityEnd = authorityEnd,
+    hasValidFirstHost = '@' !in firstSegment && isValidHostPort(firstSegment),
   )
   if (atIndex <= userInfoStart) return uri
 
@@ -88,11 +89,12 @@ private fun findUserInfoAtIndex(
   uri: String,
   startIndex: Int,
   authorityEnd: Int,
+  hasValidFirstHost: Boolean,
 ): Int {
   val atInAuthority = uri.lastIndexOf('@', startIndex = authorityEnd - 1)
   if (atInAuthority > startIndex) {
     val hostInAuthority = uri.substring(atInAuthority + 1, authorityEnd)
-    if (isDefiniteHostPort(hostInAuthority) || ':' in hostInAuthority) {
+    if (isDefiniteHostPort(hostInAuthority) || (':' in hostInAuthority && isValidHostPort(hostInAuthority))) {
       return atInAuthority
     }
   }
@@ -102,12 +104,15 @@ private fun findUserInfoAtIndex(
     val atIndex = uri.lastIndexOf('@', startIndex = searchFrom)
     if (atIndex < authorityEnd) break
 
+    val candidateUserInfo = uri.substring(startIndex, atIndex)
     val hostEnd = uri.indexOfAny(charArrayOf('/', '?', '#'), startIndex = atIndex + 1)
       .let { if (it < 0) uri.length else it }
     val hostPort = uri.substring(atIndex + 1, hostEnd)
-    if (isValidHostPort(hostPort)
-      && isServerEndpoint(hostPort)
-      && "://" !in uri.substring(startIndex, atIndex)
+    val isEndpoint = isServerEndpoint(hostPort) || (!hasValidFirstHost && isDefiniteHostPort(hostPort))
+    if (':' in candidateUserInfo
+      && "://" !in candidateUserInfo
+      && isValidHostPort(hostPort)
+      && isEndpoint
     ) {
       return atIndex
     }

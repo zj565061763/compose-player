@@ -581,7 +581,21 @@ class ComposePlayerVodTest {
         assertEquals(0, controller.clearVideoSurfaceCount)
         assertEquals(1, baseRebindCount)
 
+        // 底层视图通过 rebindKeyProvider 主动重绑后移至栈顶：先卸载顶层旧视图不重复触发重绑，卸载当前栈顶视图时通知剩余视图重绑
+        var secondRebindCount = 0
+        val secondToken = player.attachPlayerView(PlayerViewToken { secondRebindCount++ })
+        player.attachPlayerView(baseToken)
         player.detachPlayerView(baseToken)
+        runCurrent()
+        assertEquals(1, secondRebindCount)
+
+        val transientOverlayToken = player.attachPlayerView()
+        player.attachPlayerView(secondToken)
+        player.detachPlayerView(transientOverlayToken)
+        runCurrent()
+        assertEquals(1, secondRebindCount)
+
+        player.detachPlayerView(secondToken)
         assertEquals(0, controller.clearVideoSurfaceCount)
         runCurrent()
         assertEquals(1, controller.clearVideoSurfaceCount)
