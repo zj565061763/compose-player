@@ -47,6 +47,8 @@ internal abstract class BaseComposePlayer(
     private set
   var videoSizeDp by mutableStateOf<Size?>(null)
     private set
+  var isRenderedFirstFrame by mutableStateOf(false)
+    private set
 
   protected val mainScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -226,7 +228,7 @@ internal abstract class BaseComposePlayer(
         pendingStartPositionMs = C.TIME_UNSET
         _pendingSeekToDefaultPosition = false
         _isMediaBound = true
-        _isRenderedFirstFrameFlow.value = false
+        updateRenderedFirstFrame(false)
       }.onFailure { e ->
         val exception = ComposePlayerException.DataSource(cause = e)
         handlePlayerError(exception)
@@ -334,7 +336,7 @@ internal abstract class BaseComposePlayer(
     if (playbackState == Player.STATE_IDLE) {
       _videoSizeFlow.value = null
       videoSizeDp = null
-      _isRenderedFirstFrameFlow.value = false
+      updateRenderedFirstFrame(false)
     } else if (boundPlayer != null) {
       val videoSize = boundPlayer.videoSize
       if (videoSize.width > 0 && videoSize.height > 0) {
@@ -345,7 +347,7 @@ internal abstract class BaseComposePlayer(
         videoSizeDp = null
       }
       if (events?.contains(Player.EVENT_RENDERED_FIRST_FRAME) == true) {
-        _isRenderedFirstFrameFlow.value = true
+        updateRenderedFirstFrame(true)
       }
     }
 
@@ -363,6 +365,11 @@ internal abstract class BaseComposePlayer(
     ) {
       notifyPositionChanged()
     }
+  }
+
+  private fun updateRenderedFirstFrame(rendered: Boolean) {
+    isRenderedFirstFrame = rendered
+    _isRenderedFirstFrameFlow.value = rendered
   }
 
   protected abstract fun createExoPlayer(context: Context): ExoPlayer

@@ -280,7 +280,9 @@ internal class VodPlayerImpl(
 
   override fun getDuration(): Long? {
     if (!isMediaBound) return null
-    val duration = exoPlayer?.duration ?: return null
+    val player = exoPlayer ?: return null
+    if (player.playbackState == Player.STATE_IDLE) return null
+    val duration = player.duration
     return if (duration == C.TIME_UNSET) null else duration.takeIf { it > 0 }
   }
 
@@ -393,11 +395,7 @@ internal class VodPlayerImpl(
     previousState: ComposePlayerState,
     newState: ComposePlayerState,
   ) {
-    _durationFlow.value = if (player == null || player.playbackState == Player.STATE_IDLE) {
-      null
-    } else {
-      getDuration()
-    }
+    _durationFlow.value = getDuration()
   }
 
   override fun handlePlayerError(error: ComposePlayerException) {

@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -50,7 +49,7 @@ fun ComposePlayerView(
     val basePlayer = player as? BaseComposePlayer
     val exoPlayer = basePlayer?.exoPlayer
     val sourceSizeDp = basePlayer?.videoSizeDp
-    val isRenderedFirstFrame by player.isRenderedFirstFrameFlow.collectAsState()
+    val isRenderedFirstFrame = basePlayer?.isRenderedFirstFrame == true
 
     key(rebindKeyProvider()) {
       PlayerSurface(

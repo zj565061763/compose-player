@@ -383,6 +383,7 @@ class ComposePlayerVodTest {
         controller.moveToReady(durationMs = 30_000L, size = VideoSize(1280, 720))
         controller.renderFirstFrame()
         assertTrue(player.isRenderedFirstFrameFlow.value)
+        assertTrue(player.isRenderedFirstFrame)
 
         var observedStateAtError: ComposePlayerState? = null
         var observedBufferAtError: ComposePlayerBufferState? = null
@@ -411,7 +412,10 @@ class ComposePlayerVodTest {
         assertEquals(ComposePlayerBufferState.None, observedBufferAtError)
         assertNull(observedSizeAtError)
         assertNull(player.videoSizeDp)
+        assertNull(player.durationFlow.value)
+        assertNull(player.getDuration())
         assertFalse(observedFirstFrameAtError)
+        assertFalse(player.isRenderedFirstFrame)
         assertEquals(0, controller.seekToDefaultPositionCount)
 
         // 推进重试间隔：点播保留媒体绑定不重复 setMediaItem，但在 prepare 前执行 seekToDefaultPosition

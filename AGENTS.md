@@ -46,9 +46,9 @@
 
 ### 公共宿主基类（`BaseComposePlayer`）
 
-- `exoPlayer` 与 `videoSizeDp` 使用 Compose `mutableStateOf` 持有，首次调用 `preparePlayer()` 且数据源校验通过时才创建底层实例，并在 `syncStates` 中按像素宽高比同步折算源尺寸，供 `ComposePlayerView` 首帧零延迟感知实例与宽高比变化。
+- `exoPlayer`、`videoSizeDp` 与 `isRenderedFirstFrame` 使用 Compose `mutableStateOf` 持有，首次调用 `preparePlayer()` 且数据源校验通过时才创建底层实例，并在 `syncStates` 中同步维护像素宽高比折算尺寸与首帧标记，供 `ComposePlayerView` 同帧原子感知实例、宽高比与首帧变化。
 - `mainScope` 基于 `SupervisorJob() + Dispatchers.Main.immediate` 承载主线程错误重试与子类异步任务，`releasePlayer()` 时取消子协程并保持作用域可复用。
-- `composePlayerViewRebindKeyOnResume` 仅在经历过 `onPause` 后恢复 `onResume` 时递增重绑键值，避免首次组合重复重建表面；`ComposePlayerView` 基于 `isRenderedFirstFrameFlow` 控制表面透明度并直接读取 `BaseComposePlayer.videoSizeDp`，避免跨页面首帧比例闪烁及停止或切源缓冲期间残留旧画面与旧宽高比。
+- `composePlayerViewRebindKeyOnResume` 仅在经历过 `onPause` 后恢复 `onResume` 时递增重绑键值，避免首次组合重复重建表面；`ComposePlayerView` 直接读取 `BaseComposePlayer` 的 `isRenderedFirstFrame` 与 `videoSizeDp` 控制表面透明度与源尺寸，避免跨页面、停止或切源期间出现首帧比例闪烁与旧画面撕裂。
 - `_isMediaBound` 跟踪当前数据源是否已绑定到底层 `ExoPlayer`：点播（`rebindMediaOnIdle = false`）在中途网络报错进入 `Player.STATE_IDLE` 后重试仅调用 `player.prepare()` 保留断点（遇到 `ERROR_CODE_BEHIND_LIVE_WINDOW` 时标记并在下次 `prepare()` 前调用 `seekToDefaultPosition()`），仅在切换数据源、`stopPlayer()` 或 `releasePlayer()` 后重新绑定媒体项；直播（`rebindMediaOnIdle = true`）每次重连重新调用 `setMediaItem` 由 `RtspMediaSource.Factory` 重建数据源。
 - `startPlayer()` 在底层处于 `Player.STATE_ENDED` 或当前进度已达已知总时长末尾时先执行 `seekTo(0)` 再播放。
 - `Player.Listener.onEvents` 在单次事件批次末尾通过 `syncStates` 与子类纯计算函数 `computePlayerState` 统一派生缓冲态、视频分辨率、首帧标记与播放态；发生异常时先复位状态并完成子类错误处理，最后发射 `exceptionFlow`，避免瞬态状态矛盾与同步收集器重入被覆盖。
@@ -76,8 +76,9 @@
 - `ComposePlayerRtsp.create` 将小于等于 0 的 `timeoutMs` 归一化为 `RtspMediaSource.DEFAULT_TIMEOUT_MS`（`8000ms`），`newLivePlayer` 将 `DefaultLoadControl` 设为最小缓冲 32ms、起播与恢复缓冲 0ms、无后置缓冲，并通过 `DefaultRenderersFactory.setAllowedVideoJoiningTimeMs(0L)` 降低首帧拼接延迟。
 - `syncWatchdog` 在拉流绑定且无音频抑制的缓冲或播放阶段自动在 `mainScope` 上维护看门狗协程 `_watchdogJob`（连接与初始缓冲阶段将进度停滞阈值放宽至 `timeoutMs + 2000ms` 之后以避免打断底层超时报错，切入 `Playing` 时刷新基准时间），脱离上述状态时立即取消协程并将倍速恢复为 `1.0f`；进度停滞或播放态绑定有效渲染表面下的渲染帧停滞超时后向 `eventFlow` 发射 `ComposePlayerRtspEvent` 并调用 `restartPlay()`；当缓冲差大于 `chaseLatency` 时以 `1.2f` 倍速追帧，回落至 `chaseLatency / 2` 及以下时恢复为 `1.0f`。
 
-## 修改约束
+## 修改与审查约束
 
+- 代码设计与审查聚焦常规业务场景，不考虑极端边缘场景，不为极端情况增加复杂度。
 - `:lib` 所有 Media3 依赖均声明为 `implementation`，公开 API 严禁暴露任何 `androidx.media3.*` 类型；公开签名直接引用的 Compose 基础类型声明为 `api`。
 - 状态与一次性事件统一通过 `StateFlow` / `Flow` 暴露，不引入命令式 `Callback` 监听接口。
 - `ComposePlayerCore`、`ComposePlayer`、`ComposePlayerRtsp` 均为 `sealed interface`，新增实现类需继承 `BaseComposePlayer` 以接入 `ComposePlayerView`。
