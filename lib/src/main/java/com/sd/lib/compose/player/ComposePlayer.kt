@@ -122,13 +122,13 @@ sealed interface ComposePlayer : ComposePlayerCore {
           }
 
         val baseDataSourceFactory = if (cache != null) {
-          val lazyCacheFactory by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+          DataSource.Factory {
             CacheDataSource.Factory()
               .setCache(cache.cache)
               .setUpstreamDataSourceFactory(httpDataSourceFactory)
               .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+              .createDataSource()
           }
-          DataSource.Factory { lazyCacheFactory.createDataSource() }
         } else {
           httpDataSourceFactory
         }

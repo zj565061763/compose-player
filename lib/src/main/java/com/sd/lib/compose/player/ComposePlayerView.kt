@@ -47,10 +47,7 @@ fun ComposePlayerView(
   ) {
     if (LocalInspectionMode.current) return@Box
 
-    val basePlayer = player as? BaseComposePlayer
-    val exoPlayer = basePlayer?.exoPlayer
-    val sourceSizeDp = basePlayer?.videoSizeDp
-    val isRenderedFirstFrame = basePlayer?.isRenderedFirstFrame == true
+    val basePlayer = player as BaseComposePlayer
 
     var autoRebindCount by remember(basePlayer) { mutableIntStateOf(0) }
     val viewToken = remember(basePlayer) {
@@ -58,14 +55,12 @@ fun ComposePlayerView(
     }
     val rebindKey = rebindKeyProvider()
 
-    if (basePlayer != null) {
-      DisposableEffect(basePlayer, viewToken, rebindKey) {
-        basePlayer.attachPlayerView(viewToken)
-        onDispose {}
-      }
-      DisposableEffect(basePlayer, viewToken) {
-        onDispose { basePlayer.detachPlayerView(viewToken) }
-      }
+    DisposableEffect(basePlayer, rebindKey) {
+      basePlayer.attachPlayerView(viewToken)
+      onDispose {}
+    }
+    DisposableEffect(basePlayer) {
+      onDispose { basePlayer.detachPlayerView(viewToken) }
     }
 
     key(rebindKey, autoRebindCount) {
@@ -74,10 +69,10 @@ fun ComposePlayerView(
           .fillMaxSize()
           .resizeWithContentScale(
             contentScale = contentScale,
-            sourceSizeDp = sourceSizeDp,
+            sourceSizeDp = basePlayer.videoSizeDp,
           )
-          .alpha(if (isRenderedFirstFrame) 1f else 0f),
-        player = exoPlayer,
+          .alpha(if (basePlayer.isRenderedFirstFrame) 1f else 0f),
+        player = basePlayer.exoPlayer,
         surfaceType = when (surfaceType) {
           ComposePlayerViewSurfaceType.SurfaceView -> SURFACE_TYPE_SURFACE_VIEW
           ComposePlayerViewSurfaceType.TextureView -> SURFACE_TYPE_TEXTURE_VIEW

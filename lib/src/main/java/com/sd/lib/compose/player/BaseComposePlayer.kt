@@ -418,11 +418,10 @@ internal class PlayerViewToken(
 )
 
 /** 将 [VideoSize] 按像素宽高比折算为 Compose 尺寸 */
-private fun VideoSize.toComposeSizeDp(): Size? {
-  if (width <= 0 || height <= 0) return null
+private fun VideoSize.toComposeSizeDp(): Size {
   var size = Size(width.toFloat(), height.toFloat())
   val par = pixelWidthHeightRatio
-  if (par > 0f && par.isFinite()) {
+  if (par > 0f) {
     if (par < 1f) {
       size = size.copy(width = size.width * par)
     } else if (par > 1f) {

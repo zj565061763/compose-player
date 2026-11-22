@@ -60,11 +60,7 @@ fun ComposePlayerException.desc(context: Context): String {
     }
 
     is ComposePlayerException.Playback -> {
-      buildString {
-        append("(").append(errorCode).append(")")
-        val detail = cause?.toString() ?: errorCodeName
-        if (detail.isNotEmpty()) append(detail)
-      }
+      "($errorCode)${cause ?: errorCodeName}"
     }
   }
 }

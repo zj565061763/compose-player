@@ -313,7 +313,7 @@ internal class RtspPlayerImpl(
 
     // 检查进度是否在前进（连接与缓冲阶段放宽至 timeoutMs 之后，避免抢先打断底层超时异常）
     if (stuckPositionInterval > 0) {
-      val threshold = if (playerStateFlow.value == ComposePlayerState.Playing || timeoutMs <= 0) {
+      val threshold = if (playerStateFlow.value == ComposePlayerState.Playing) {
         stuckPositionInterval
       } else {
         maxOf(stuckPositionInterval, timeoutMs + 2_000L)
@@ -321,7 +321,7 @@ internal class RtspPlayerImpl(
       if (_lastPosition != currentPosition) {
         _lastPosition = currentPosition
         _lastPositionChangeTime = now
-      } else if (_lastPositionChangeTime > 0 && now - _lastPositionChangeTime > threshold) {
+      } else if (now - _lastPositionChangeTime > threshold) {
         _eventFlow.tryEmit(ComposePlayerRtspEvent.StuckPosition)
         restartPlay()
         return true
@@ -338,7 +338,7 @@ internal class RtspPlayerImpl(
         if (_lastRenderedFrameCount != currentRenderedFrameCount) {
           _lastRenderedFrameCount = currentRenderedFrameCount
           _lastFrameRenderedTime = now
-        } else if (_lastFrameRenderedTime > 0 && now - _lastFrameRenderedTime > stuckRenderedFrameInterval) {
+        } else if (now - _lastFrameRenderedTime > stuckRenderedFrameInterval) {
           _eventFlow.tryEmit(ComposePlayerRtspEvent.StuckRenderedFrame)
           restartPlay()
           return true
