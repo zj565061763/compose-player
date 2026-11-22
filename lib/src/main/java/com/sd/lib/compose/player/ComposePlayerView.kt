@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -50,6 +51,13 @@ fun ComposePlayerView(
     val exoPlayer = basePlayer?.exoPlayer
     val sourceSizeDp = basePlayer?.videoSizeDp
     val isRenderedFirstFrame = basePlayer?.isRenderedFirstFrame == true
+
+    if (basePlayer != null) {
+      DisposableEffect(basePlayer) {
+        basePlayer.attachPlayerView()
+        onDispose { basePlayer.detachPlayerView() }
+      }
+    }
 
     key(rebindKeyProvider()) {
       PlayerSurface(

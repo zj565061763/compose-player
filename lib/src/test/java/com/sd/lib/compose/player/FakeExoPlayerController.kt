@@ -41,6 +41,9 @@ class MainDispatcherRule(
 @androidx.annotation.OptIn(UnstableApi::class)
 internal class FakeExoPlayerController {
   private val _listeners = CopyOnWriteArrayList<Player.Listener>()
+  private var _deferredFlagsBuilder = FlagSet.Builder()
+
+  var deferOnEvents: Boolean = false
 
   var playbackState: Int = Player.STATE_IDLE
     private set
@@ -330,6 +333,21 @@ internal class FakeExoPlayerController {
     }
 
     val flags = flagBuilder.build()
+    if (flags.size() > 0) {
+      if (deferOnEvents) {
+        _deferredFlagsBuilder.addAll(flags)
+      } else {
+        val events = Player.Events(flags)
+        for (listener in _listeners) {
+          listener.onEvents(exoPlayer, events)
+        }
+      }
+    }
+  }
+
+  fun flushDeferredEvents() {
+    val flags = _deferredFlagsBuilder.build()
+    _deferredFlagsBuilder = FlagSet.Builder()
     if (flags.size() > 0) {
       val events = Player.Events(flags)
       for (listener in _listeners) {

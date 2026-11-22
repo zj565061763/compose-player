@@ -137,14 +137,14 @@ internal class RtspPlayerImpl(
 
   override fun setDataSource(uri: String) {
     if (updateDataSource(uri) && _isPlayingRequested) {
-      startStream()
+      startPlayer()
     }
   }
 
   override fun play() {
     _isPlayingRequested = true
     stopRetry()
-    startStream()
+    startPlayer()
   }
 
   override fun stop() {
@@ -245,7 +245,7 @@ internal class RtspPlayerImpl(
     val canRetry = error is ComposePlayerException.Playback && _isPlayingRequested
     val scheduled = canRetry && startRetry {
       if (_isPlayingRequested) {
-        startStream()
+        startPlayer()
       }
     }
     if (!scheduled) {
@@ -253,15 +253,9 @@ internal class RtspPlayerImpl(
     }
   }
 
-  /** 启动底层拉流并同步看门狗状态 */
-  private fun startStream() {
-    startPlayer()
-    syncWatchdog(exoPlayer, enteredPlaying = false)
-  }
-
   private fun restartPlay() {
     stopPlayer()
-    startStream()
+    startPlayer()
   }
 
   /** 按当前播放与音频抑制状态自动启停守护任务 */

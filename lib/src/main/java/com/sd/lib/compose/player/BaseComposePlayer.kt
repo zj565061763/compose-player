@@ -69,6 +69,7 @@ internal abstract class BaseComposePlayer(
   private var _isMediaBound = false
   private var _pendingSeekToDefaultPosition = false
   private var _retryJob: Job? = null
+  private var _attachedViewCount = 0
 
   protected var pendingStartPositionMs: Long = C.TIME_UNSET
 
@@ -168,6 +169,23 @@ internal abstract class BaseComposePlayer(
     }
   }
 
+  /** 登记 [ComposePlayerView] 挂载 */
+  fun attachPlayerView() {
+    _attachedViewCount++
+  }
+
+  /** 注销 [ComposePlayerView] 挂载，无活跃视图时在下一帧清空底层视频表面引用 */
+  fun detachPlayerView() {
+    _attachedViewCount = (_attachedViewCount - 1).coerceAtLeast(0)
+    if (_attachedViewCount == 0 && exoPlayer != null) {
+      mainScope.launch(Dispatchers.Main) {
+        if (_attachedViewCount == 0) {
+          exoPlayer?.clearVideoSurface()
+        }
+      }
+    }
+  }
+
   /** 更新数据源，数据源发生变化时停止当前播放并返回 true */
   protected fun updateDataSource(uri: String): Boolean {
     val safeUri = uri.trim()
@@ -254,6 +272,7 @@ internal abstract class BaseComposePlayer(
         player.seekTo(0)
       }
       player.play()
+      syncPlayerState()
     }
   }
 

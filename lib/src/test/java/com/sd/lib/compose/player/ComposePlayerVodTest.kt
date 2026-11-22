@@ -195,6 +195,16 @@ class ComposePlayerVodTest {
       assertEquals(ComposePlayerState.Ended, player.playerStateFlow.value)
       player.prepare()
       assertEquals(ComposePlayerState.Ended, player.playerStateFlow.value)
+
+      // 已发起 play() 处于首次缓冲期（STATE_BUFFERING）时调用 prepare 不打断起播
+      player.setDataSource("https://example.com/next.mp4")
+      player.play()
+      assertEquals(ComposePlayerState.Idle, player.playerStateFlow.value)
+      assertEquals(ComposePlayerBufferState.Buffering, player.bufferStateFlow.value)
+      player.prepare()
+      assertTrue(controller.playWhenReady)
+      controller.moveToReady(durationMs = 8_000L)
+      assertEquals(ComposePlayerState.Playing, player.playerStateFlow.value)
     }
   }
 
@@ -521,6 +531,62 @@ class ComposePlayerVodTest {
         assertEquals(ComposePlayerState.Playing, player.playerStateFlow.value)
 
         collector.cancel()
+      }
+    }
+  }
+
+  @Test
+  fun syncsStatesImmediatelyWhenExoPlayerDefersOnEventsAndClearsDetachedViewSurface() {
+    runTest(mainDispatcherRule.testDispatcher) {
+      val context = ApplicationProvider.getApplicationContext<Context>()
+      val controller = FakeExoPlayerController().also { it.deferOnEvents = true }
+      VodPlayerImpl(
+        context = context,
+        retryOnErrorInterval = 1_000L,
+        playerProvider = { controller.exoPlayer },
+      ).usePlayer { player ->
+        // 首次 play() 在 onEvents 异步派发前，本帧已同步进入 Buffering
+        player.setDataSource("https://example.com/video.mp4")
+        player.play()
+        assertEquals(ComposePlayerBufferState.Buffering, player.bufferStateFlow.value)
+        controller.flushDeferredEvents()
+
+        controller.moveToReady(durationMs = 10_000L)
+        controller.flushDeferredEvents()
+        assertEquals(ComposePlayerState.Playing, player.playerStateFlow.value)
+
+        // Paused 态调用 play() 在 onEvents 异步派发前，本帧已同步切回 Playing
+        player.pause()
+        controller.flushDeferredEvents()
+        assertEquals(ComposePlayerState.Paused, player.playerStateFlow.value)
+
+        player.play()
+        assertEquals(ComposePlayerState.Playing, player.playerStateFlow.value)
+        controller.flushDeferredEvents()
+
+        // 预加载报错自动重试在 onEvents 异步派发前，本帧已同步恢复 Buffering
+        player.pause()
+        controller.flushDeferredEvents()
+        controller.failWith(newTestPlaybackException())
+        controller.flushDeferredEvents()
+        assertEquals(ComposePlayerBufferState.None, player.bufferStateFlow.value)
+
+        advanceTimeBy(1.seconds)
+        runCurrent()
+        assertEquals(ComposePlayerBufferState.Buffering, player.bufferStateFlow.value)
+        controller.flushDeferredEvents()
+
+        // 挂载视图同帧重绑不触发 clearVideoSurface，全部卸载后在下一帧清理底层表面引用
+        player.attachPlayerView()
+        player.detachPlayerView()
+        player.attachPlayerView()
+        runCurrent()
+        assertEquals(0, controller.clearVideoSurfaceCount)
+
+        player.detachPlayerView()
+        assertEquals(0, controller.clearVideoSurfaceCount)
+        runCurrent()
+        assertEquals(1, controller.clearVideoSurfaceCount)
       }
     }
   }

@@ -214,6 +214,12 @@ internal class VodPlayerImpl(
     ) {
       return
     }
+    if (_playIntent == VodPlayIntent.Playing
+      && isMediaBound
+      && exoPlayer?.playbackState != Player.STATE_IDLE
+    ) {
+      return
+    }
     cancelAutoStart()
     stopRetry()
     _playIntent = VodPlayIntent.Paused
@@ -405,7 +411,12 @@ internal class VodPlayerImpl(
     val scheduled = canRetry && startRetry {
       when (_playIntent) {
         VodPlayIntent.Playing -> startPlayer()
-        VodPlayIntent.Paused -> preparePlayer()?.pause()
+        VodPlayIntent.Paused -> {
+          preparePlayer()?.also { player ->
+            player.pause()
+            syncPlayerState()
+          }
+        }
         VodPlayIntent.Idle -> {}
       }
     }
