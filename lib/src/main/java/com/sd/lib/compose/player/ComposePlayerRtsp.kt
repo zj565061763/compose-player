@@ -339,6 +339,7 @@ internal class RtspPlayerImpl(
     val hasValidSurface = isPlaying && surfaceSize.width > 0 && surfaceSize.height > 0
     if (stuckRenderedFrameInterval > 0 && hasValidSurface) {
       player.videoDecoderCounters?.also { counters ->
+        counters.ensureUpdated()
         val currentRenderedFrameCount = counters.renderedOutputBufferCount
         if (_lastRenderedFrameCount != currentRenderedFrameCount) {
           _lastRenderedFrameCount = currentRenderedFrameCount

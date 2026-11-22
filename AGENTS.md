@@ -74,7 +74,7 @@
 - 继承 `BaseComposePlayer`，通过 `_isPlayingRequested` 管理拉流意图（状态流仅在 `Idle` 与 `Playing` 间流转），前置通过 `isValidRtspUri` 校验 `rtsp`/`rtspt` 协议与主机端口。
 - 被动永久失去 `playWhenReady` 时执行 `stop()`；短暂音频抑制期间自动将输出态置回 `Idle` 并停止看门狗，抑制解除时若处于 `STATE_READY` 且累积缓冲延迟超限则调用 `restartPlay()` 追回实时画面，否则自动恢复看门狗；播放请求下流结束（`onStateEnded`）时调用 `restartPlay()` 重新拉流。
 - `ComposePlayerRtsp.create` 将小于等于 0 的 `timeoutMs` 归一化为 `RtspMediaSource.DEFAULT_TIMEOUT_MS`（`8000ms`），`newLivePlayer` 将 `DefaultLoadControl` 设为最小缓冲 32ms、起播与恢复缓冲 0ms、无后置缓冲，并通过 `DefaultRenderersFactory.setAllowedVideoJoiningTimeMs(0L)` 降低首帧拼接延迟。
-- `syncWatchdog` 在拉流绑定且无音频抑制的缓冲或播放阶段自动在 `mainScope` 上维护看门狗协程 `_watchdogJob`（连接与初始缓冲阶段将进度停滞阈值放宽至 `timeoutMs + 2000ms` 之后以避免打断底层超时报错，切入 `Playing` 时刷新基准时间），脱离上述状态时立即取消协程并将倍速恢复为 `1.0f`；进度停滞或播放态绑定有效渲染表面下的渲染帧停滞超时后向 `eventFlow` 发射 `ComposePlayerRtspEvent` 并调用 `restartPlay()`；当缓冲差大于 `chaseLatency` 时以 `1.2f` 倍速追帧，回落至 `chaseLatency / 2` 及以下时恢复为 `1.0f`。
+- `syncWatchdog` 在拉流绑定且无音频抑制的缓冲或播放阶段自动在 `mainScope` 上维护看门狗协程 `_watchdogJob`（连接与初始缓冲阶段将进度停滞阈值放宽至 `timeoutMs + 2000ms` 之后以避免打断底层超时报错，切入 `Playing` 时刷新基准时间），脱离上述状态时立即取消协程并将倍速恢复为 `1.0f`；进度停滞或播放态绑定有效渲染表面下的渲染帧停滞（读取 `DecoderCounters` 前调用 `ensureUpdated()`）超时后向 `eventFlow` 发射 `ComposePlayerRtspEvent` 并调用 `restartPlay()`；当缓冲差大于 `chaseLatency` 时以 `1.2f` 倍速追帧，回落至 `chaseLatency / 2` 及以下时恢复为 `1.0f`。
 
 ## 修改与审查约束
 
