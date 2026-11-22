@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
+import androidx.annotation.MainThread
 import androidx.annotation.OptIn
 import androidx.annotation.RawRes
 import androidx.compose.runtime.Composable
@@ -54,21 +55,27 @@ sealed interface ComposePlayer : ComposePlayerCore {
   val isLoopingFlow: StateFlow<Boolean>
 
   /** 预加载数据源（不自动开始播放） */
+  @MainThread
   fun prepare()
 
   /** 暂停播放 */
+  @MainThread
   fun pause()
 
   /** 移动进度到指定时间点（毫秒） */
+  @MainThread
   fun seekTo(positionMs: Long)
 
   /** 总时长（毫秒），null 表示未知，非 null 时一定大于 0 */
+  @MainThread
   fun getDuration(): Long?
 
   /** 设置播放倍速 */
+  @MainThread
   fun setSpeed(speed: Float)
 
   /** 设置是否循环播放 */
+  @MainThread
   fun setLooping(looping: Boolean)
 
   companion object {
@@ -141,6 +148,7 @@ sealed interface ComposePlayer : ComposePlayerCore {
 }
 
 /** 设置 Raw 资源数据源 */
+@MainThread
 fun ComposePlayer.setDataSource(@RawRes resId: Int) {
   val uri = Uri.Builder()
     .scheme(ContentResolver.SCHEME_ANDROID_RESOURCE)
@@ -155,6 +163,7 @@ suspend fun ComposePlayer.awaitDuration(): Long {
 }
 
 /** 按偏移量（毫秒）移动播放进度 */
+@MainThread
 fun ComposePlayer.seekDelta(ms: Long) {
   seekTo(getCurrentPosition() + ms)
 }
@@ -354,7 +363,6 @@ internal class VodPlayerImpl(
           ComposePlayerState.Idle
         } else if (_playIntent == VodPlayIntent.Playing
           && player.playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_NONE
-          && currentState == ComposePlayerState.Playing
         ) {
           ComposePlayerState.Playing
         } else {

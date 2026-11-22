@@ -332,13 +332,22 @@ class ComposePlayerVodTest {
       controller.moveToReady(durationMs = 10_000L)
       assertEquals(ComposePlayerState.Paused, player.playerStateFlow.value)
 
-      // 再次播放到片尾后直接调用 play()，自动回到 0ms 起播
+      // 暂停态跳转进入缓冲期后立即调用 play()，缓冲完成前直接切为 Playing
+      player.seekTo(5_000L)
+      assertEquals(ComposePlayerBufferState.Buffering, player.bufferStateFlow.value)
+      assertEquals(ComposePlayerState.Paused, player.playerStateFlow.value)
       player.play()
+      assertEquals(ComposePlayerState.Playing, player.playerStateFlow.value)
+      controller.moveToReady(durationMs = 10_000L)
+
+      // 再次播放到片尾后直接调用 play()，自动回到 0ms 起播且缓冲期间立即进入 Playing
       controller.moveToEnded()
       assertEquals(ComposePlayerState.Ended, player.playerStateFlow.value)
       player.play()
       assertEquals(0L, controller.seekToHistory.last())
       assertTrue(controller.playWhenReady)
+      assertEquals(ComposePlayerBufferState.Buffering, player.bufferStateFlow.value)
+      assertEquals(ComposePlayerState.Playing, player.playerStateFlow.value)
     }
   }
 
@@ -356,17 +365,21 @@ class ComposePlayerVodTest {
       controller.moveToReady(durationMs = 10_000L)
       assertEquals(ComposePlayerState.Playing, player.playerStateFlow.value)
 
-      // 短暂音频抑制期间对外呈现为 Paused（包括中途缓冲与缓冲完成）
+      // 短暂音频抑制期间对外呈现为 Paused，缓冲完成前解除抑制立即恢复 Playing
       controller.updateSuppressionReason(Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS)
       assertEquals(ComposePlayerState.Paused, player.playerStateFlow.value)
 
       controller.moveToBuffering()
       assertEquals(ComposePlayerState.Paused, player.playerStateFlow.value)
 
+      controller.updateSuppressionReason(Player.PLAYBACK_SUPPRESSION_REASON_NONE)
+      assertEquals(ComposePlayerState.Playing, player.playerStateFlow.value)
+
+      // 再次抑制至缓冲完成，解除抑制后恢复 Playing
+      controller.updateSuppressionReason(Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS)
       controller.moveToReady(durationMs = 10_000L)
       assertEquals(ComposePlayerState.Paused, player.playerStateFlow.value)
 
-      // 抑制解除后自动恢复 Playing
       controller.updateSuppressionReason(Player.PLAYBACK_SUPPRESSION_REASON_NONE)
       assertEquals(ComposePlayerState.Playing, player.playerStateFlow.value)
 
@@ -576,18 +589,66 @@ class ComposePlayerVodTest {
         assertEquals(ComposePlayerBufferState.Buffering, player.bufferStateFlow.value)
         controller.flushDeferredEvents()
 
-        // 挂载视图同帧重绑不触发 clearVideoSurface，全部卸载后在下一帧清理底层表面引用
-        player.attachPlayerView()
-        player.detachPlayerView()
-        player.attachPlayerView()
+        // 挂载视图同帧切换不触发 clearVideoSurface，上层弹窗卸载通知新栈顶重绑，全部卸载后在下一帧清理表面引用
+        val firstToken = player.attachPlayerView()
+        player.detachPlayerView(firstToken)
+        var baseRebindCount = 0
+        val baseToken = player.attachPlayerView(PlayerViewToken { baseRebindCount++ })
         runCurrent()
         assertEquals(0, controller.clearVideoSurfaceCount)
+        assertEquals(0, baseRebindCount)
 
-        player.detachPlayerView()
+        // 叠加弹窗视图后关闭弹窗：不清空表面，立即通知新栈顶视图重绑接管
+        val dialogToken = player.attachPlayerView()
+        player.detachPlayerView(dialogToken)
+        runCurrent()
+        assertEquals(0, controller.clearVideoSurfaceCount)
+        assertEquals(1, baseRebindCount)
+
+        // 原视图已通过 promotePlayerView 主动接管栈顶后，旧上层视图销毁不再重复触发重绑
+        val childPageToken = player.attachPlayerView()
+        player.promotePlayerView(baseToken)
+        player.detachPlayerView(childPageToken)
+        runCurrent()
+        assertEquals(0, controller.clearVideoSurfaceCount)
+        assertEquals(1, baseRebindCount)
+
+        player.detachPlayerView(baseToken)
         assertEquals(0, controller.clearVideoSurfaceCount)
         runCurrent()
         assertEquals(1, controller.clearVideoSurfaceCount)
       }
+    }
+  }
+
+  @Test
+  fun switchingDataSourceDoesNotRestoreStaleVideoSizeWhileBuffering() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val controller = FakeExoPlayerController().also { it.keepStaleVideoSizeOnStop = true }
+    VodPlayerImpl(
+      context = context,
+      retryOnErrorInterval = 0L,
+      playerProvider = { controller.exoPlayer },
+    ).usePlayer { player ->
+      player.setDataSource("https://example.com/landscape.mp4")
+      player.play()
+      controller.moveToReady(durationMs = 10_000L, size = VideoSize(1920, 1080))
+      assertEquals(Pair(1920, 1080), player.videoSizeFlow.value)
+      assertTrue(player.videoSizeDp == Size(1920f, 1080f))
+
+      // 模拟底层渲染器释放完成前 exoPlayer.videoSize 仍残留旧尺寸：切源缓冲阶段保持 null，不回写旧尺寸
+      player.setDataSource("https://example.com/portrait.mp4")
+      player.play()
+      assertEquals(ComposePlayerBufferState.Buffering, player.bufferStateFlow.value)
+      assertNull(player.videoSizeFlow.value)
+      assertNull(player.videoSizeDp)
+
+      // 旧渲染器异步回调 VideoSize.UNKNOWN 后仍为 null，新视频派发尺寸事件后更新为新尺寸
+      controller.updateVideoSize(VideoSize.UNKNOWN)
+      assertNull(player.videoSizeFlow.value)
+      controller.moveToReady(durationMs = 15_000L, size = VideoSize(720, 1280))
+      assertEquals(Pair(720, 1280), player.videoSizeFlow.value)
+      assertTrue(player.videoSizeDp == Size(720f, 1280f))
     }
   }
 }

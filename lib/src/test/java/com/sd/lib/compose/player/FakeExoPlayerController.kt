@@ -44,6 +44,7 @@ internal class FakeExoPlayerController {
   private var _deferredFlagsBuilder = FlagSet.Builder()
 
   var deferOnEvents: Boolean = false
+  var keepStaleVideoSizeOnStop: Boolean = false
 
   var playbackState: Int = Player.STATE_IDLE
     private set
@@ -125,6 +126,12 @@ internal class FakeExoPlayerController {
 
   fun renderFirstFrame() {
     updateState(extraEvents = intArrayOf(Player.EVENT_RENDERED_FIRST_FRAME)) {}
+  }
+
+  fun updateVideoSize(size: VideoSize) {
+    updateState(extraEvents = intArrayOf(Player.EVENT_VIDEO_SIZE_CHANGED)) {
+      videoSize = size
+    }
   }
 
   private fun invokeProxyMethod(
@@ -214,7 +221,7 @@ internal class FakeExoPlayerController {
           seekToHistory.add(pos)
           updateState(extraEvents = intArrayOf(Player.EVENT_POSITION_DISCONTINUITY)) {
             currentPosition = pos
-            if (playbackState == Player.STATE_ENDED) {
+            if (playbackState == Player.STATE_READY || playbackState == Player.STATE_ENDED) {
               playbackState = Player.STATE_BUFFERING
             }
           }
@@ -233,6 +240,9 @@ internal class FakeExoPlayerController {
         if (playbackState != Player.STATE_IDLE) {
           updateState {
             playerError = null
+            if (!keepStaleVideoSizeOnStop) {
+              videoSize = VideoSize.UNKNOWN
+            }
             playbackState = Player.STATE_IDLE
           }
         }
@@ -263,6 +273,7 @@ internal class FakeExoPlayerController {
   fun failWith(error: ExoPlaybackException) {
     updateState(extraEvents = intArrayOf(Player.EVENT_PLAYER_ERROR)) {
       playerError = error
+      videoSize = VideoSize.UNKNOWN
       playbackState = Player.STATE_IDLE
     }
   }

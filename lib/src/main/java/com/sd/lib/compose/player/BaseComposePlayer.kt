@@ -69,7 +69,7 @@ internal abstract class BaseComposePlayer(
   private var _isMediaBound = false
   private var _pendingSeekToDefaultPosition = false
   private var _retryJob: Job? = null
-  private var _attachedViewCount = 0
+  private val _attachedViews = mutableListOf<PlayerViewToken>()
 
   protected var pendingStartPositionMs: Long = C.TIME_UNSET
 
@@ -169,17 +169,35 @@ internal abstract class BaseComposePlayer(
     }
   }
 
-  /** 登记 [ComposePlayerView] 挂载 */
-  fun attachPlayerView() {
-    _attachedViewCount++
+  /** 登记 [ComposePlayerView] 挂载并返回视图令牌 */
+  fun attachPlayerView(token: PlayerViewToken = PlayerViewToken()): PlayerViewToken {
+    _attachedViews.remove(token)
+    _attachedViews.add(token)
+    return token
   }
 
-  /** 注销 [ComposePlayerView] 挂载，无活跃视图时在下一帧清空底层视频表面引用 */
-  fun detachPlayerView() {
-    _attachedViewCount = (_attachedViewCount - 1).coerceAtLeast(0)
-    if (_attachedViewCount == 0 && exoPlayer != null) {
+  /** 将指定视图令牌提升至栈顶，表示当前已主动接管渲染表面 */
+  fun promotePlayerView(token: PlayerViewToken) {
+    val index = _attachedViews.lastIndexOf(token)
+    if (index >= 0 && index != _attachedViews.lastIndex) {
+      _attachedViews.removeAt(index)
+      _attachedViews.add(token)
+    }
+  }
+
+  /** 注销 [ComposePlayerView] 挂载，栈顶卸载且仍有活跃视图时通知新栈顶重绑，无活跃视图时在下一帧清空表面引用 */
+  fun detachPlayerView(token: PlayerViewToken) {
+    val index = _attachedViews.lastIndexOf(token)
+    if (index < 0) return
+    val wasTop = index == _attachedViews.lastIndex
+    _attachedViews.removeAt(index)
+    if (_attachedViews.isNotEmpty()) {
+      if (wasTop) {
+        _attachedViews.last().onRebind()
+      }
+    } else if (exoPlayer != null) {
       mainScope.launch(Dispatchers.Main) {
-        if (_attachedViewCount == 0) {
+        if (_attachedViews.isEmpty()) {
           exoPlayer?.clearVideoSurface()
         }
       }
@@ -246,6 +264,7 @@ internal abstract class BaseComposePlayer(
         pendingStartPositionMs = C.TIME_UNSET
         _pendingSeekToDefaultPosition = false
         _isMediaBound = true
+        clearVideoSize()
         updateRenderedFirstFrame(false)
       }.onFailure { e ->
         val exception = ComposePlayerException.DataSource(cause = e)
@@ -353,17 +372,17 @@ internal abstract class BaseComposePlayer(
     }
 
     if (playbackState == Player.STATE_IDLE) {
-      _videoSizeFlow.value = null
-      videoSizeDp = null
+      clearVideoSize()
       updateRenderedFirstFrame(false)
     } else if (boundPlayer != null) {
-      val videoSize = boundPlayer.videoSize
-      if (videoSize.width > 0 && videoSize.height > 0) {
-        _videoSizeFlow.value = Pair(videoSize.width, videoSize.height)
-        videoSizeDp = videoSize.toComposeSizeDp()
-      } else {
-        _videoSizeFlow.value = null
-        videoSizeDp = null
+      if (events?.contains(Player.EVENT_VIDEO_SIZE_CHANGED) == true) {
+        val videoSize = boundPlayer.videoSize
+        if (videoSize.width > 0 && videoSize.height > 0) {
+          _videoSizeFlow.value = Pair(videoSize.width, videoSize.height)
+          videoSizeDp = videoSize.toComposeSizeDp()
+        } else {
+          clearVideoSize()
+        }
       }
       if (events?.contains(Player.EVENT_RENDERED_FIRST_FRAME) == true) {
         updateRenderedFirstFrame(true)
@@ -384,6 +403,11 @@ internal abstract class BaseComposePlayer(
     ) {
       notifyPositionChanged()
     }
+  }
+
+  private fun clearVideoSize() {
+    _videoSizeFlow.value = null
+    videoSizeDp = null
   }
 
   private fun updateRenderedFirstFrame(rendered: Boolean) {
@@ -412,6 +436,11 @@ internal abstract class BaseComposePlayer(
     newState: ComposePlayerState,
   ) {}
 }
+
+/** 活跃 [ComposePlayerView] 挂载令牌 */
+internal class PlayerViewToken(
+  val onRebind: () -> Unit = {},
+)
 
 /** 将 [VideoSize] 按像素宽高比折算为 Compose 尺寸 */
 private fun VideoSize.toComposeSizeDp(): Size? {

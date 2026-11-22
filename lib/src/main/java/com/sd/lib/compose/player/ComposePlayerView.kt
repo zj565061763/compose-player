@@ -52,14 +52,24 @@ fun ComposePlayerView(
     val sourceSizeDp = basePlayer?.videoSizeDp
     val isRenderedFirstFrame = basePlayer?.isRenderedFirstFrame == true
 
+    var autoRebindCount by remember(basePlayer) { mutableIntStateOf(0) }
+    val viewToken = remember(basePlayer) {
+      PlayerViewToken { autoRebindCount++ }
+    }
+    val userRebindKey = rebindKeyProvider()
+
     if (basePlayer != null) {
-      DisposableEffect(basePlayer) {
-        basePlayer.attachPlayerView()
-        onDispose { basePlayer.detachPlayerView() }
+      DisposableEffect(basePlayer, viewToken) {
+        basePlayer.attachPlayerView(viewToken)
+        onDispose { basePlayer.detachPlayerView(viewToken) }
+      }
+      DisposableEffect(basePlayer, viewToken, userRebindKey) {
+        basePlayer.promotePlayerView(viewToken)
+        onDispose {}
       }
     }
 
-    key(rebindKeyProvider()) {
+    key(userRebindKey, autoRebindCount) {
       PlayerSurface(
         modifier = Modifier
           .fillMaxSize()

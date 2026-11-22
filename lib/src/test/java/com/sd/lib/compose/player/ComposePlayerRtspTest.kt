@@ -2,6 +2,7 @@ package com.sd.lib.compose.player
 
 import android.content.Context
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.Size
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DecoderCounters
@@ -15,6 +16,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -84,12 +86,21 @@ class ComposePlayerRtspTest {
         controller.moveToBuffering()
         assertEquals(ComposePlayerState.Playing, player.playerStateFlow.value)
 
-        // 直播流意外收到 STATE_ENDED 时自动重新绑定媒体项拉流
+        // 直播流意外收到 STATE_ENDED 时自动重新绑定媒体项拉流，且重拉缓冲期不回写旧残留视频尺寸
+        controller.keepStaleVideoSizeOnStop = true
+        controller.updateVideoSize(VideoSize(1920, 1080))
+        assertEquals(Pair(1920, 1080), player.videoSizeFlow.value)
+
         controller.moveToReady()
         controller.moveToEnded()
         runCurrent()
         assertEquals(2, controller.setMediaItemCount)
         assertEquals(2, controller.prepareCount)
+        assertNull(player.videoSizeFlow.value)
+        assertNull(player.videoSizeDp)
+
+        controller.updateVideoSize(VideoSize(1280, 720))
+        assertEquals(Pair(1280, 720), player.videoSizeFlow.value)
       }
     }
   }

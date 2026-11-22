@@ -1,12 +1,13 @@
 package com.sd.lib.compose.player
 
+import androidx.annotation.MainThread
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
-/** 播放器核心接口，定义常规点播与直播共用的状态及控制能力 */
+/** 播放器核心接口，定义常规点播与直播共用的状态及控制能力；控制与同步查询方法需在主线程调用 */
 sealed interface ComposePlayerCore {
   /** 播放器状态 */
   val playerStateFlow: StateFlow<ComposePlayerState>
@@ -27,15 +28,19 @@ sealed interface ComposePlayerCore {
   val isMutedFlow: StateFlow<Boolean>
 
   /** 设置数据源 */
+  @MainThread
   fun setDataSource(uri: String)
 
   /** 开始播放 */
+  @MainThread
   fun play()
 
   /** 停止播放 */
+  @MainThread
   fun stop()
 
   /** 当前播放进度时间点（毫秒） */
+  @MainThread
   fun getCurrentPosition(): Long
 
   /**
@@ -46,9 +51,11 @@ sealed interface ComposePlayerCore {
   fun positionFlow(interval: Duration = 200.milliseconds): Flow<Long>
 
   /** 设置静音 */
+  @MainThread
   fun setMute(mute: Boolean)
 
   /** 释放播放器资源 */
+  @MainThread
   fun release()
 }
 
