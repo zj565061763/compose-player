@@ -176,15 +176,6 @@ internal abstract class BaseComposePlayer(
     return token
   }
 
-  /** 将指定视图令牌提升至栈顶，表示当前已主动接管渲染表面 */
-  fun promotePlayerView(token: PlayerViewToken) {
-    val index = _attachedViews.lastIndexOf(token)
-    if (index >= 0 && index != _attachedViews.lastIndex) {
-      _attachedViews.removeAt(index)
-      _attachedViews.add(token)
-    }
-  }
-
   /** 注销 [ComposePlayerView] 挂载，栈顶卸载且仍有活跃视图时通知新栈顶重绑，无活跃视图时在下一帧清空表面引用 */
   fun detachPlayerView(token: PlayerViewToken) {
     val index = _attachedViews.lastIndexOf(token)

@@ -239,56 +239,32 @@ class ComposePlayerVodTest {
   }
 
   @Test
-  fun switchingDataSourceWhilePlayingDefersAutoStartAndAllowsSameFrameOverrides() {
-    runTest(mainDispatcherRule.testDispatcher) {
-      val context = ApplicationProvider.getApplicationContext<Context>()
-      val controller = FakeExoPlayerController()
-      VodPlayerImpl(
-        context = context,
-        retryOnErrorInterval = 0L,
-        playerProvider = { controller.exoPlayer },
-      ).usePlayer { player ->
-        // 1. 默认延迟自动起播
-        player.setDataSource("https://example.com/1.mp4")
-        player.play()
-        controller.moveToReady(durationMs = 10_000L)
-        assertEquals(1, controller.setMediaItemCount)
+  fun switchingDataSourceStartsImmediatelyWhenPlayingAndResetsWhenPaused() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val controller = FakeExoPlayerController()
+    VodPlayerImpl(
+      context = context,
+      retryOnErrorInterval = 0L,
+      playerProvider = { controller.exoPlayer },
+    ).usePlayer { player ->
+      // 播放态下切换数据源立即同步绑定并开始加载新源
+      player.setDataSource("https://example.com/1.mp4")
+      player.play()
+      controller.moveToReady(durationMs = 10_000L)
+      assertEquals(1, controller.setMediaItemCount)
 
-        player.setDataSource("https://example.com/2.mp4")
-        assertEquals(1, controller.setMediaItemCount)
-        runCurrent()
-        assertEquals(2, controller.setMediaItemCount)
-        assertTrue(controller.playWhenReady)
+      player.setDataSource("https://example.com/2.mp4")
+      assertEquals(2, controller.setMediaItemCount)
+      assertTrue(controller.playWhenReady)
+      controller.moveToReady(durationMs = 20_000L)
+      assertEquals(ComposePlayerState.Playing, player.playerStateFlow.value)
 
-        // 2. 同帧紧随 seekTo：合并为起播位置，不发生二次 seekTo
-        controller.moveToReady(durationMs = 20_000L)
-        controller.seekToHistory.clear()
-        player.setDataSource("https://example.com/3.mp4")
-        player.seekTo(8_000L)
-        runCurrent()
-        assertEquals(3, controller.setMediaItemCount)
-        assertEquals(8_000L, controller.lastStartPositionMs)
-        assertTrue(controller.seekToHistory.isEmpty())
-
-        // 3. 同帧紧随 prepare：覆盖为只预加载不自动起播
-        controller.moveToReady(durationMs = 20_000L)
-        player.setDataSource("https://example.com/4.mp4")
-        player.prepare()
-        runCurrent()
-        controller.moveToReady(durationMs = 15_000L)
-        assertFalse(controller.playWhenReady)
-        assertEquals(ComposePlayerState.Paused, player.playerStateFlow.value)
-
-        // 4. 同帧紧随 pause：取消延迟自动起播且不触发网络准备
-        player.play()
-        controller.moveToReady(durationMs = 15_000L)
-        val countBeforePauseOverride = controller.setMediaItemCount
-        player.setDataSource("https://example.com/5.mp4")
-        player.pause()
-        runCurrent()
-        assertEquals(countBeforePauseOverride, controller.setMediaItemCount)
-        assertEquals(ComposePlayerState.Idle, player.playerStateFlow.value)
-      }
+      // 暂停态下切换数据源重置回 Idle，不自动发起网络准备
+      player.pause()
+      assertEquals(ComposePlayerState.Paused, player.playerStateFlow.value)
+      player.setDataSource("https://example.com/3.mp4")
+      assertEquals(2, controller.setMediaItemCount)
+      assertEquals(ComposePlayerState.Idle, player.playerStateFlow.value)
     }
   }
 
@@ -601,14 +577,6 @@ class ComposePlayerVodTest {
         // 叠加弹窗视图后关闭弹窗：不清空表面，立即通知新栈顶视图重绑接管
         val dialogToken = player.attachPlayerView()
         player.detachPlayerView(dialogToken)
-        runCurrent()
-        assertEquals(0, controller.clearVideoSurfaceCount)
-        assertEquals(1, baseRebindCount)
-
-        // 原视图已通过 promotePlayerView 主动接管栈顶后，旧上层视图销毁不再重复触发重绑
-        val childPageToken = player.attachPlayerView()
-        player.promotePlayerView(baseToken)
-        player.detachPlayerView(childPageToken)
         runCurrent()
         assertEquals(0, controller.clearVideoSurfaceCount)
         assertEquals(1, baseRebindCount)

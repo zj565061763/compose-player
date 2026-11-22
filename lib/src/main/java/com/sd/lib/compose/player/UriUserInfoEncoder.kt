@@ -15,55 +15,18 @@ internal fun encodeUserInfoIfNeed(uri: String): String {
   val authorityEnd = uri.indexOfAny(charArrayOf('/', '?', '#'), startIndex = userInfoStart)
     .let { if (it < 0) uri.length else it }
   val firstSegment = uri.substring(userInfoStart, authorityEnd)
-
-  val atIndex = if ('@' in firstSegment) {
-    val firstAtIndex = uri.lastIndexOf('@', startIndex = authorityEnd - 1)
-    val candidateHostPort = uri.substring(firstAtIndex + 1, authorityEnd)
-    if (isExplicitServerHostPort(candidateHostPort)) {
-      firstAtIndex
-    } else if (isLikelyCompleteHostPort(candidateHostPort)) {
-      if (authorityEnd < uri.length) {
-        val trailingAtIndex = findTruncatedUserInfoAtIndex(
-          uri = uri,
-          startIndex = authorityEnd,
-          allowQueryEquals = false,
-          requireExplicitServerHost = true,
-          allowNestedPathSlashes = false,
-          requireColonInMiddle = false,
-        )
-        if (trailingAtIndex >= 0) trailingAtIndex else firstAtIndex
-      } else {
-        firstAtIndex
-      }
-    } else {
-      val trailingAtIndex = findTruncatedUserInfoAtIndex(
-        uri = uri,
-        startIndex = authorityEnd,
-        allowQueryEquals = true,
-        requireExplicitServerHost = false,
-        allowNestedPathSlashes = true,
-        requireColonInMiddle = false,
-      )
-      if (trailingAtIndex >= 0) trailingAtIndex else firstAtIndex
-    }
-  } else {
-    if (!canBeTruncatedUserInfoPrefix(firstSegment)) return uri
-    val hasColonInFirst = ':' in firstSegment
-    val firstIsValidHostPort = hasColonInFirst && isValidHostPort(firstSegment)
-    findTruncatedUserInfoAtIndex(
-      uri = uri,
-      startIndex = authorityEnd,
-      allowQueryEquals = hasColonInFirst && !firstIsValidHostPort,
-      requireExplicitServerHost = !hasColonInFirst || firstIsValidHostPort,
-      allowNestedPathSlashes = !firstIsValidHostPort,
-      requireColonInMiddle = !hasColonInFirst,
-    )
+  if ('@' !in firstSegment && isDefiniteHostPort(firstSegment)) {
+    return uri
   }
+
+  val atIndex = findUserInfoAtIndex(
+    uri = uri,
+    startIndex = userInfoStart,
+    authorityEnd = authorityEnd,
+  )
   if (atIndex <= userInfoStart) return uri
 
   val rawUserInfo = uri.substring(userInfoStart, atIndex)
-  if (rawUserInfo.isEmpty()) return uri
-
   val parts = rawUserInfo.split(":", limit = 2)
   val encodedUsername = percentEncodeComponent(parts[0])
   val encodedPassword = if (parts.size > 1) percentEncodeComponent(parts[1]) else null
@@ -112,72 +75,49 @@ internal fun isValidRtspUri(encodedUri: String): Boolean {
   return isValidHostPort(hostPort)
 }
 
-/** 判断被 `/`、`?`、`#` 截断的首段是否可能为未编码凭据前缀（而非完整域名或 IPv6 主机） */
-private fun canBeTruncatedUserInfoPrefix(segment: String): Boolean {
-  return segment.isNotEmpty()
-    && !segment.startsWith("[")
-    && !segment.startsWith(":")
-    && !isLikelyCompleteHostPort(segment)
-}
-
-/** 从截断偏移后逆向查找紧跟合法 `host[:port]` 的 `@` 分隔符下标，排除路径层级、邮箱与查询参数 */
-private fun findTruncatedUserInfoAtIndex(
-  uri: String,
-  startIndex: Int,
-  allowQueryEquals: Boolean,
-  requireExplicitServerHost: Boolean,
-  allowNestedPathSlashes: Boolean,
-  requireColonInMiddle: Boolean,
-): Int {
-  if (startIndex >= uri.length) return -1
-  var searchFrom = uri.length - 1
-  while (searchFrom >= startIndex) {
-    val atIndex = uri.lastIndexOf('@', startIndex = searchFrom)
-    if (atIndex < startIndex) return -1
-
-    val middle = uri.substring(startIndex, atIndex)
-    val queryStart = middle.indexOf('?')
-    val hasDisallowedQueryEquals = !allowQueryEquals
-      && queryStart >= 0
-      && middle.indexOf('=', startIndex = queryStart + 1) >= 0
-    val hasDisallowedNestedSlash = !allowNestedPathSlashes
-      && middle.length > 1
-      && '/' in middle.substring(1)
-    val missingRequiredColon = requireColonInMiddle && ':' !in middle
-
-    if (!hasDisallowedQueryEquals
-      && !hasDisallowedNestedSlash
-      && !missingRequiredColon
-      && "://" !in middle
-    ) {
-      val hostEnd = uri.indexOfAny(charArrayOf('/', '?', '#'), startIndex = atIndex + 1)
-        .let { if (it < 0) uri.length else it }
-      val hostPort = uri.substring(atIndex + 1, hostEnd)
-      val hostValid = if (requireExplicitServerHost) {
-        isExplicitServerHostPort(hostPort)
-      } else {
-        isValidHostPort(hostPort)
-      }
-      if (hostValid) {
-        return atIndex
-      }
-    }
-    searchFrom = atIndex - 1
-  }
-  return -1
-}
-
-/** 判断 URI 片段是否为完整的主机（含域名点号、`localhost` 或 IPv6 字面量）及可选端口 */
-private fun isLikelyCompleteHostPort(hostPort: String): Boolean {
-  if (!isValidHostPort(hostPort)) return false
-  if (hostPort.startsWith("[")) return true
-  val host = hostPort.substringBefore(':')
+/** 判断不含 `@` 的首段是否为明确的无凭据主机端点（域名、`localhost` 或 IPv6 字面量） */
+private fun isDefiniteHostPort(segment: String): Boolean {
+  if (!isValidHostPort(segment)) return false
+  if (segment.startsWith("[")) return true
+  val host = segment.substringBefore(':')
   return '.' in host || host.equals("localhost", ignoreCase = true)
 }
 
-/** 判断 URI 片段是否为明确的服务器端点（含显式端口、IPv6 字面量或 IPv4 地址） */
-private fun isExplicitServerHostPort(hostPort: String): Boolean {
-  if (!isValidHostPort(hostPort)) return false
+/** 定位凭据末尾的 `@` 下标：首段含合法主机时直接采用，被 `/`、`?`、`#` 截断时向后查找服务器端点 */
+private fun findUserInfoAtIndex(
+  uri: String,
+  startIndex: Int,
+  authorityEnd: Int,
+): Int {
+  val atInAuthority = uri.lastIndexOf('@', startIndex = authorityEnd - 1)
+  if (atInAuthority > startIndex) {
+    val hostInAuthority = uri.substring(atInAuthority + 1, authorityEnd)
+    if (isDefiniteHostPort(hostInAuthority) || ':' in hostInAuthority) {
+      return atInAuthority
+    }
+  }
+
+  var searchFrom = uri.length - 1
+  while (searchFrom >= authorityEnd) {
+    val atIndex = uri.lastIndexOf('@', startIndex = searchFrom)
+    if (atIndex < authorityEnd) break
+
+    val hostEnd = uri.indexOfAny(charArrayOf('/', '?', '#'), startIndex = atIndex + 1)
+      .let { if (it < 0) uri.length else it }
+    val hostPort = uri.substring(atIndex + 1, hostEnd)
+    if (isValidHostPort(hostPort)
+      && isServerEndpoint(hostPort)
+      && "://" !in uri.substring(startIndex, atIndex)
+    ) {
+      return atIndex
+    }
+    searchFrom = atIndex - 1
+  }
+  return if (atInAuthority > startIndex) atInAuthority else -1
+}
+
+/** 判断是否为带端口或 IP 的服务器端点 */
+private fun isServerEndpoint(hostPort: String): Boolean {
   return hostPort.startsWith("[") || ':' in hostPort || isIpv4Address(hostPort)
 }
 

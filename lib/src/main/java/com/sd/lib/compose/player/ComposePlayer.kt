@@ -21,14 +21,11 @@ import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 
 /** 在 Compose 中记住并在退出组合时自动释放 [ComposePlayer] */
 @Composable
@@ -190,7 +187,6 @@ internal class VodPlayerImpl(
   private val _isLoopingFlow = MutableStateFlow(false)
 
   private var _playIntent = VodPlayIntent.Idle
-  private var _autoStartJob: Job? = null
 
   override val durationFlow: StateFlow<Long?> = _durationFlow.asStateFlow()
   override val speedFlow: StateFlow<Float> = _speedFlow.asStateFlow()
@@ -198,19 +194,9 @@ internal class VodPlayerImpl(
 
   override fun setDataSource(uri: String) {
     if (updateDataSource(uri)) {
-      cancelAutoStart()
       when (_playIntent) {
-        VodPlayIntent.Playing -> {
-          _autoStartJob = mainScope.launch(Dispatchers.Main) {
-            _autoStartJob = null
-            if (_playIntent == VodPlayIntent.Playing && !isMediaBound) {
-              startPlayer()
-            }
-          }
-        }
-        VodPlayIntent.Paused -> {
-          _playIntent = VodPlayIntent.Idle
-        }
+        VodPlayIntent.Playing -> startPlayer()
+        VodPlayIntent.Paused -> _playIntent = VodPlayIntent.Idle
         VodPlayIntent.Idle -> {}
       }
     }
@@ -229,7 +215,6 @@ internal class VodPlayerImpl(
     ) {
       return
     }
-    cancelAutoStart()
     stopRetry()
     _playIntent = VodPlayIntent.Paused
     preparePlayer()?.also { player ->
@@ -239,7 +224,6 @@ internal class VodPlayerImpl(
   }
 
   override fun play() {
-    cancelAutoStart()
     _playIntent = VodPlayIntent.Playing
     stopRetry()
     startPlayer()
@@ -247,7 +231,6 @@ internal class VodPlayerImpl(
 
   override fun pause() {
     if (_playIntent != VodPlayIntent.Playing) return
-    cancelAutoStart()
     stopRetry()
     val player = exoPlayer
     if (player == null || !isMediaBound) {
@@ -260,7 +243,6 @@ internal class VodPlayerImpl(
   }
 
   override fun stop() {
-    cancelAutoStart()
     _playIntent = VodPlayIntent.Idle
     stopPlayer()
   }
@@ -317,7 +299,6 @@ internal class VodPlayerImpl(
   }
 
   override fun release() {
-    cancelAutoStart()
     _playIntent = VodPlayIntent.Idle
     releasePlayer()
   }
@@ -430,13 +411,6 @@ internal class VodPlayerImpl(
     }
     if (!scheduled) {
       _playIntent = VodPlayIntent.Idle
-    }
-  }
-
-  private fun cancelAutoStart() {
-    _autoStartJob?.also { job ->
-      _autoStartJob = null
-      job.cancel()
     }
   }
 }

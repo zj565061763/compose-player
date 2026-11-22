@@ -56,20 +56,15 @@ fun ComposePlayerView(
     val viewToken = remember(basePlayer) {
       PlayerViewToken { autoRebindCount++ }
     }
-    val userRebindKey = rebindKeyProvider()
 
     if (basePlayer != null) {
       DisposableEffect(basePlayer, viewToken) {
         basePlayer.attachPlayerView(viewToken)
         onDispose { basePlayer.detachPlayerView(viewToken) }
       }
-      DisposableEffect(basePlayer, viewToken, userRebindKey) {
-        basePlayer.promotePlayerView(viewToken)
-        onDispose {}
-      }
     }
 
-    key(userRebindKey, autoRebindCount) {
+    key(rebindKeyProvider(), autoRebindCount) {
       PlayerSurface(
         modifier = Modifier
           .fillMaxSize()

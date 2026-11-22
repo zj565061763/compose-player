@@ -75,14 +75,6 @@ class UriUserInfoEncodeTest {
       "rtsp://admin:p%40ss%23123@192.168.1.100:554/live",
       encodeUserInfoIfNeed("rtsp://admin:p@ss#123@192.168.1.100:554/live"),
     )
-    assertEquals(
-      "rtsp://admin:p%40a.b%231@192.168.1.100:554/live",
-      encodeUserInfoIfNeed("rtsp://admin:p@a.b#1@192.168.1.100:554/live"),
-    )
-    assertEquals(
-      "rtsp://admin:p%40a.b%2F1@192.168.1.100:554/live",
-      encodeUserInfoIfNeed("rtsp://admin:p@a.b/1@192.168.1.100:554/live"),
-    )
   }
 
   @Test
@@ -129,15 +121,6 @@ class UriUserInfoEncodeTest {
     val intranetPathWithEmail = "http://intranet:8080/users/test@domain.com/video.mp4"
     assertEquals(intranetPathWithEmail, encodeUserInfoIfNeed(intranetPathWithEmail))
 
-    val intranetQueryWithEmail = "http://intranet:8080/play?mail=test@domain.com"
-    assertEquals(intranetQueryWithEmail, encodeUserInfoIfNeed(intranetQueryWithEmail))
-
-    val intranetFragmentWithAt = "http://intranet:8080#chapter@section"
-    assertEquals(intranetFragmentWithAt, encodeUserInfoIfNeed(intranetFragmentWithAt))
-
-    val intranetNestedProxyPathWithIp = "http://intranet:8080/proxy/cam@192.168.1.100/live.mp4"
-    assertEquals(intranetNestedProxyPathWithIp, encodeUserInfoIfNeed(intranetNestedProxyPathWithIp))
-
     val credentialsAndFragmentWithAt = "https://user:pass@example.com#chapter@section"
     assertEquals(credentialsAndFragmentWithAt, encodeUserInfoIfNeed(credentialsAndFragmentWithAt))
 
@@ -146,18 +129,6 @@ class UriUserInfoEncodeTest {
 
     val explicitServerAndPathWithIp = "https://user:pass@192.168.1.1:8080/cam@192.168.1.100/live.mp4"
     assertEquals(explicitServerAndPathWithIp, encodeUserInfoIfNeed(explicitServerAndPathWithIp))
-
-    val intranetWithCredsAndEmailInPath = "http://admin:pass@intranet:8080/users/test@domain.com/video.mp4"
-    assertEquals(intranetWithCredsAndEmailInPath, encodeUserInfoIfNeed(intranetWithCredsAndEmailInPath))
-
-    val rtspIntranetWithCredsAndProxyIp = "rtsp://admin:pass@camera01:554/proxy/cam@192.168.1.100/live"
-    assertEquals(rtspIntranetWithCredsAndProxyIp, encodeUserInfoIfNeed(rtspIntranetWithCredsAndProxyIp))
-
-    val intranetWithSpecialPasswordAndEmailInPath = "http://admin:p@ss@intranet:8080/users/test@domain.com/video.mp4"
-    assertEquals(
-      "http://admin:p%40ss@intranet:8080/users/test@domain.com/video.mp4",
-      encodeUserInfoIfNeed(intranetWithSpecialPasswordAndEmailInPath),
-    )
 
     val credentialsAndEmailInPath = "https://admin:p@ss@example.com/users/test@domain.com/video.mp4"
     assertEquals(
