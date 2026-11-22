@@ -203,16 +203,7 @@ internal class VodPlayerImpl(
   }
 
   override fun prepare() {
-    if (!hasDataSource) return
-    if (playerStateFlow.value == ComposePlayerState.Playing
-      || playerStateFlow.value == ComposePlayerState.Ended
-    ) {
-      return
-    }
-    if (_playIntent == VodPlayIntent.Playing
-      && isMediaBound
-      && exoPlayer?.playbackState != Player.STATE_IDLE
-    ) {
+    if (!hasDataSource || (isMediaBound && exoPlayer?.playbackState != Player.STATE_IDLE)) {
       return
     }
     stopRetry()
@@ -323,13 +314,7 @@ internal class VodPlayerImpl(
     if (player == null) return ComposePlayerState.Idle
     return when (player.playbackState) {
       Player.STATE_IDLE -> ComposePlayerState.Idle
-      Player.STATE_ENDED -> {
-        if (_playIntent == VodPlayIntent.Paused) {
-          ComposePlayerState.Paused
-        } else {
-          ComposePlayerState.Ended
-        }
-      }
+      Player.STATE_ENDED -> ComposePlayerState.Ended
       Player.STATE_READY -> {
         if (_playIntent == VodPlayIntent.Idle) {
           ComposePlayerState.Idle
@@ -357,23 +342,6 @@ internal class VodPlayerImpl(
   override fun onPlayWhenReadyLost() {
     if (_playIntent == VodPlayIntent.Playing) {
       _playIntent = VodPlayIntent.Paused
-    }
-  }
-
-  override fun onStateReady(player: ExoPlayer): Boolean {
-    return when (_playIntent) {
-      VodPlayIntent.Playing -> {
-        if (!player.playWhenReady) player.play()
-        true
-      }
-      VodPlayIntent.Paused -> {
-        if (player.playWhenReady) player.pause()
-        true
-      }
-      VodPlayIntent.Idle -> {
-        stopPlayer()
-        false
-      }
     }
   }
 

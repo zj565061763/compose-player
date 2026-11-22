@@ -87,9 +87,8 @@ private val PARSER_AUTH_RESPONSE_REGEX = Regex("\\b(401|403)\\s+response\\b", Re
 /** 判断异常链中是否包含 HTTP 或 RTSP 鉴权失败（401/403） */
 @SuppressLint("UnsafeOptInUsageError")
 internal fun Throwable?.isAuthError(): Boolean {
-  val visited = HashSet<Throwable>()
   var current = this
-  while (current != null && visited.add(current)) {
+  while (current != null) {
     when (current) {
       is HttpDataSource.InvalidResponseCodeException -> {
         if (current.responseCode == 401 || current.responseCode == 403) {
@@ -103,8 +102,7 @@ internal fun Throwable?.isAuthError(): Boolean {
         }
       }
       is ParserException -> {
-        val msg = (current as Throwable).message
-        if (msg != null && PARSER_AUTH_RESPONSE_REGEX.containsMatchIn(msg)) {
+        if (PARSER_AUTH_RESPONSE_REGEX.containsMatchIn(current.message)) {
           return true
         }
       }

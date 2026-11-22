@@ -67,7 +67,6 @@ internal abstract class BaseComposePlayer(
 
   private var _dataSource: String? = null
   private var _isMediaBound = false
-  private var _pendingSeekToDefaultPosition = false
   private var _retryJob: Job? = null
   private val _attachedViews = mutableListOf<PlayerViewToken>()
 
@@ -102,9 +101,6 @@ internal abstract class BaseComposePlayer(
 
       if (events.contains(Player.EVENT_PLAYER_ERROR)) {
         player.playerError?.also { error ->
-          if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
-            _pendingSeekToDefaultPosition = true
-          }
           syncStates(player, events)
           val exception = error.toComposePlayerException()
           handlePlayerError(exception)
@@ -125,7 +121,6 @@ internal abstract class BaseComposePlayer(
           Player.STATE_READY -> {
             stopRetry()
             setException(null)
-            if (!onStateReady(player)) return
           }
           Player.STATE_ENDED -> {
             if (!onStateEnded(player)) return
@@ -244,27 +239,18 @@ internal abstract class BaseComposePlayer(
     }
 
     if (encodedUri != null) {
-      runCatching {
-        val mediaItem = MediaItem.fromUri(encodedUri)
-        val startPositionMs = pendingStartPositionMs
-        if (startPositionMs != C.TIME_UNSET) {
-          player.setMediaItem(mediaItem, startPositionMs)
-        } else {
-          player.setMediaItem(mediaItem)
-        }
-        pendingStartPositionMs = C.TIME_UNSET
-        _pendingSeekToDefaultPosition = false
-        _isMediaBound = true
-        clearVideoSize()
-        updateRenderedFirstFrame(false)
-      }.onFailure { e ->
-        val exception = ComposePlayerException.DataSource(cause = e)
-        handlePlayerError(exception)
-        setException(exception)
-        return null
+      val mediaItem = MediaItem.fromUri(encodedUri)
+      val startPositionMs = pendingStartPositionMs
+      if (startPositionMs != C.TIME_UNSET) {
+        player.setMediaItem(mediaItem, startPositionMs)
+      } else {
+        player.setMediaItem(mediaItem)
       }
-    } else if (_pendingSeekToDefaultPosition) {
-      _pendingSeekToDefaultPosition = false
+      pendingStartPositionMs = C.TIME_UNSET
+      _isMediaBound = true
+      clearVideoSize()
+      updateRenderedFirstFrame(false)
+    } else if (player.playerError?.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
       player.seekToDefaultPosition()
     }
 
@@ -291,7 +277,6 @@ internal abstract class BaseComposePlayer(
     stopRetry()
     setException(null)
     _isMediaBound = false
-    _pendingSeekToDefaultPosition = false
     pendingStartPositionMs = C.TIME_UNSET
     exoPlayer?.also { player ->
       if (player.playbackState != Player.STATE_IDLE) {
@@ -411,7 +396,6 @@ internal abstract class BaseComposePlayer(
     player: ExoPlayer?,
     currentState: ComposePlayerState,
   ): ComposePlayerState
-  protected abstract fun onStateReady(player: ExoPlayer): Boolean
   protected abstract fun onStateEnded(player: ExoPlayer): Boolean
   protected abstract fun handlePlayerError(error: ComposePlayerException)
 

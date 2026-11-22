@@ -49,7 +49,7 @@
 - `exoPlayer`、`videoSizeDp` 与 `isRenderedFirstFrame` 使用 Compose `mutableStateOf` 持有，首次调用 `preparePlayer()` 且数据源校验通过时才创建底层实例，并在 `syncStates` 中仅响应 `EVENT_VIDEO_SIZE_CHANGED` 维护像素宽高比折算尺寸、在绑定新媒体或进入 `STATE_IDLE` 时清空尺寸与首帧标记，供 `ComposePlayerView` 同帧原子感知实例、宽高比与首帧变化并避免切源缓冲期回写旧尺寸。
 - `mainScope` 基于 `SupervisorJob() + Dispatchers.Main.immediate` 承载主线程错误重试与子类异步任务，`releasePlayer()` 时取消子协程并保持作用域可复用。
 - `composePlayerViewRebindKeyOnResume` 仅在经历过 `onPause` 后恢复 `onResume` 时递增重绑键值，避免首次组合重复重建表面；`ComposePlayerView` 直接读取 `BaseComposePlayer` 的 `isRenderedFirstFrame` 与 `videoSizeDp` 控制表面透明度与源尺寸，并通过 `attachPlayerView`/`detachPlayerView` 维护有序活跃视图令牌栈（`rebindKeyProvider` 变化时重新调用 `attachPlayerView` 将当前视图移至栈顶）：栈顶视图卸载且仍有活跃视图时通知新栈顶重绑接管表面，无活跃视图时在下一帧调用 `clearVideoSurface()` 释放底层视图引用。
-- `_isMediaBound` 跟踪当前数据源是否已绑定到底层 `ExoPlayer`：点播（`rebindMediaOnIdle = false`）在中途网络报错进入 `Player.STATE_IDLE` 后重试仅调用 `player.prepare()` 保留断点（遇到 `ERROR_CODE_BEHIND_LIVE_WINDOW` 时标记并在下次 `prepare()` 前调用 `seekToDefaultPosition()`），仅在切换数据源、`stopPlayer()` 或 `releasePlayer()` 后重新绑定媒体项；直播（`rebindMediaOnIdle = true`）每次重连重新调用 `setMediaItem` 由 `RtspMediaSource.Factory` 重建数据源。
+- `_isMediaBound` 跟踪当前数据源是否已绑定到底层 `ExoPlayer`：点播（`rebindMediaOnIdle = false`）在中途网络报错进入 `Player.STATE_IDLE` 后重试仅调用 `player.prepare()` 保留断点（`playerError` 为 `ERROR_CODE_BEHIND_LIVE_WINDOW` 时在下次 `prepare()` 前调用 `seekToDefaultPosition()`），仅在切换数据源、`stopPlayer()` 或 `releasePlayer()` 后重新绑定媒体项；直播（`rebindMediaOnIdle = true`）每次重连重新调用 `setMediaItem` 由 `RtspMediaSource.Factory` 重建数据源。
 - `startPlayer()` 在底层处于 `Player.STATE_ENDED` 或当前进度已达已知总时长末尾时先执行 `seekTo(0)` 再播放，并立即调用 `syncPlayerState()` 同步本帧状态。
 - `Player.Listener.onEvents` 在单次事件批次末尾通过 `syncStates` 与子类纯计算函数 `computePlayerState` 统一派生缓冲态、视频分辨率、首帧标记与播放态；发生异常时先复位状态并完成子类错误处理，最后发射 `exceptionFlow`，避免瞬态状态矛盾与同步收集器重入被覆盖。
 - `preparePlayer()` 的空白/非法数据源异常与播放错误均转换为 `ComposePlayerException` 后分发子类，仅 `ComposePlayerException.Playback` 允许自动重试，其余异常立即复位播放意图。
@@ -61,7 +61,7 @@
 ### 点播播放器（`VodPlayerImpl`）
 
 - 继承 `BaseComposePlayer`，通过三态内部枚举 `VodPlayIntent`（`Idle`、`Playing`、`Paused`）表达用户意图，避免与输出态 `ComposePlayerState` 混杂；脱离首次加载 `Idle` 后的缓冲阶段只要意图为 `Playing` 且无音频抑制即保持或切入 `Playing`。
-- `prepare()` 在已设置数据源且未处于 `Playing`/`Ended` 或已绑定起播缓冲中时取消挂起重试并将意图置为 `Paused` 执行预加载；`pause()` 仅在 `VodPlayIntent.Playing` 时切入 `Paused`（若处于报错等待重试仅取消重试任务而不重新发起网络加载），空闲、停止或结束态调用 `pause()` 为空操作。
+- `prepare()` 在已设置数据源且未绑定媒体或底层处于 `Player.STATE_IDLE` 时取消挂起重试并将意图置为 `Paused` 执行预加载；`pause()` 仅在 `VodPlayIntent.Playing` 时切入 `Paused`（若处于报错等待重试仅取消重试任务而不重新发起网络加载），空闲、停止或结束态调用 `pause()` 为空操作。
 - 播放意图（`VodPlayIntent.Playing`）下切换数据源立即同步调用 `startPlayer()` 加载新源；暂停意图下切换数据源归为 `Idle`。
 - 因失去音频焦点或拔出耳机被动失去 `playWhenReady` 时将意图置为 `Paused`；短暂音频抑制期间保持 `Playing` 意图但输出态派生为 `Paused`，抑制解除且脱离 `Idle` 后自动恢复 `Playing`；自然播放结束进入 `Ended` 时暂停底层 `playWhenReady` 并将意图归为 `Idle`（切换数据源保持 `Idle`，调用 `seekTo` 回退到片尾前时切为 `Paused`，已在片尾向后跳转保持 `Ended`）。
 - `ComposePlayer.create` 使用 `DefaultDataSource.Factory` 包装 `DefaultHttpDataSource.Factory`（传入 `cache` 时通过惰性 `DataSource.Factory` 将 `SimpleCache` 初始化推迟到后台加载线程），支持本地/Raw 资源与 HTTP/HTTPS 缓存、请求头及音频焦点管理。

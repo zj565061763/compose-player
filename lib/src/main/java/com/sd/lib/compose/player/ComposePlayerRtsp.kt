@@ -77,11 +77,10 @@ sealed interface ComposePlayerRtsp : ComposePlayerCore {
     ): ComposePlayerRtsp {
       val appContext = context.applicationContext
       val effectiveTimeoutMs = if (timeoutMs > 0) timeoutMs else RtspMediaSource.DEFAULT_TIMEOUT_MS
-      val connectTimeoutMs = effectiveTimeoutMs.coerceIn(1L, Int.MAX_VALUE.toLong()).toInt()
       val rtspSourceFactory = RtspMediaSource.Factory()
         .setForceUseRtpTcp(forceUseRtpTcp)
         .setTimeoutMs(effectiveTimeoutMs)
-        .setSocketFactory(TimeoutSocketFactory(connectTimeoutMs))
+        .setSocketFactory(TimeoutSocketFactory(effectiveTimeoutMs.toInt()))
 
       return RtspPlayerImpl(
         context = appContext,
@@ -219,20 +218,9 @@ internal class RtspPlayerImpl(
     return false
   }
 
-  override fun onStateReady(player: ExoPlayer): Boolean {
-    if (_isPlayingRequested) {
-      if (!player.playWhenReady) player.play()
-      return true
-    }
-    stopPlayer()
-    return false
-  }
-
   override fun onStateEnded(player: ExoPlayer): Boolean {
     if (_isPlayingRequested) {
       restartPlay()
-    } else {
-      stopPlayer()
     }
     return false
   }
