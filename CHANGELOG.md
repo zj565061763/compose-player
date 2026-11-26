@@ -2,9 +2,9 @@
 
 ## 1.1.1
 
-### 🐛 Bug Fixes
+### ✨ Improvements
 
-- 修复 JitPack 源码包下载路径错误，避免 Android Studio 因此显示反编译代码
+- 改善 JitPack 依赖的源码下载兼容性，便于在 Android Studio 中跳转到源码
 
 ## 1.1.0
 
