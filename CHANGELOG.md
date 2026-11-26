@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1
+
+### 🐛 Bug Fixes
+
+- 修复 JitPack 源码包下载路径错误，避免 Android Studio 因此显示反编译代码
+
 ## 1.1.0
 
 ### ⚠️ Breaking Changes
