@@ -13,7 +13,6 @@
 - 编译核心库：`./gradlew :lib:assembleRelease`。
 - 编译示例应用：`./gradlew :app:assembleDebug`。
 - 运行单元测试：`./gradlew test`。
-- JitPack 构建：`jitpack.yml` 使用 JDK 21，仅将 `:lib` 无签名发布到 Maven Local，Maven Central 的签名配置不变。
 
 ## 核心文件
 
