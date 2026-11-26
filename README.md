@@ -4,5 +4,9 @@
 # Gradle
 
 ```kotlin
+// Maven Central
 implementation("io.github.zj565061763.android:compose-player:$version")
+
+// JitPack
+implementation("com.github.zj565061763:compose-player:$version")
 ```
