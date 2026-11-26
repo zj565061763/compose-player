@@ -1,0 +1,6 @@
+before_install:
+  - sdk install java 21.0.13.1.2-amzn
+  - sdk use java 21.0.13.1.2-amzn
+
+install:
+  - ./gradlew :lib:publishToMavenLocal -PRELEASE_SIGNING_ENABLED=false
