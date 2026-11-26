@@ -56,12 +56,6 @@ dependencies {
   testImplementation(libs.robolectric)
 }
 
-if (providers.environmentVariable("JITPACK").orNull == "true") {
-  tasks.withType<GenerateModuleMetadata>().configureEach {
-    enabled = false
-  }
-}
-
 mavenPublishing {
   configure(
     AndroidSingleVariantLibrary(

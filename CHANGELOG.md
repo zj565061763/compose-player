@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.2
+
+### ✨ Improvements
+
+- 恢复 JitPack 发布的 Gradle 模块元数据，保留传递给消费端的 Compose BOM 版本约束
+
 ## 1.1.1
 
 ### ✨ Improvements
